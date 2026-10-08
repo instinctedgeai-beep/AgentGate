@@ -1,0 +1,10 @@
+{
+  "samples": 35,
+  "accuracy": 1.0,
+  "sensitive_recall": 1.0,
+  "false_positive_rate": 0.0,
+  "median_inspection_ms": 0.022,
+  "false_negative_count": 0,
+  "false_positive_count": 0,
+  "note": "Synthetic offline classifier tests, not live inference benchmarks"
+}

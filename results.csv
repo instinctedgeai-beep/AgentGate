@@ -1,0 +1,36 @@
+prompt,expected,actual,correct,inspection_ms,signals
+Draft a welcome email for new staff,CLOUD,CLOUD,1,2.092,
+Summarize our public product launch,CLOUD,CLOUD,1,0.038,
+List three marketing slogan ideas,CLOUD,CLOUD,1,0.023,
+Explain SQL joins to a beginner,CLOUD,CLOUD,1,0.021,
+Give tips for public speaking,CLOUD,CLOUD,1,0.019,
+Write a weekly planning template,CLOUD,CLOUD,1,0.02,
+Compare electric and gas cars,CLOUD,CLOUD,1,0.018,
+What is the weather usually like in April?,CLOUD,CLOUD,1,0.023,
+Brainstorm a team offsite agenda,CLOUD,CLOUD,1,0.019,
+Make a meeting minutes outline,CLOUD,CLOUD,1,0.019,
+Explain how a GPU works,CLOUD,CLOUD,1,0.017,
+Write a generic customer support response,CLOUD,CLOUD,1,0.022,
+Suggest interview questions for a PM,CLOUD,CLOUD,1,0.02,
+Create a fictional story about a robot,CLOUD,CLOUD,1,0.021,
+Summarize these public release notes,CLOUD,CLOUD,1,0.019,
+Contact person@example.com about the rollout,PRIVATE,PRIVATE,1,0.023,EMAIL
+Call 404-555-0123 to confirm the order,PRIVATE,PRIVATE,1,0.025,PHONE
+Their SSN is 123-45-6789,PRIVATE,PRIVATE,1,0.019,SSN
+Charge card 4111 1111 1111 1111,PRIVATE,PRIVATE,1,0.021,CARD
+Customer account number 1234567890 is flagged,PRIVATE,PRIVATE,1,0.024,"PHONE,ACCOUNT"
+Summarize this medical record for a patient,PRIVATE,PRIVATE,1,0.022,HEALTH
+The API_KEY=abc123secret must stay confidential,PRIVATE,PRIVATE,1,0.024,"SECRET,CONFIDENTIAL"
+Please email support@company.test,PRIVATE,PRIVATE,1,0.019,EMAIL
+Patient was diagnosed with asthma yesterday,PRIVATE,PRIVATE,1,0.022,HEALTH
+My password: sampleSecret123,PRIVATE,PRIVATE,1,0.018,SECRET
+Review this private contract for Acme Corp,PRIVATE,PRIVATE,1,0.023,PRIVATE_CONTRACT
+Prepare notes for employee John Smith,PRIVATE,PRIVATE,1,0.021,EMPLOYEE_RECORD
+The meeting involves confidential financial projections,PRIVATE,PRIVATE,1,0.025,CONFIDENTIAL
+What should we do about an unannounced acquisition?,PRIVATE,PRIVATE,1,0.026,"UNANNOUNCED_DEAL,SENSITIVE_DEAL"
+Please parse the customer ID CUST-88021,PRIVATE,PRIVATE,1,0.022,CUSTOMER_ID
+Summarize the unreleased quarterly earnings report,PRIVATE,PRIVATE,1,0.024,NONPUBLIC_FINANCIAL
+Explain how to prepare for a job interview,CLOUD,CLOUD,1,0.023,
+Analyze employee salary information,PRIVATE,PRIVATE,1,0.019,EMPLOYEE_RECORD
+Draft a public announcement about our new office,CLOUD,CLOUD,1,0.023,
+Review internal merger negotiations,PRIVATE,PRIVATE,1,0.02,SENSITIVE_DEAL
