@@ -1,6 +1,6 @@
 # AgentGate — Enterprise AI Privacy & Policy Router
 
-A two-hour portfolio MVP with a rule-based sensitive-data classifier, fail-closed routing, NVIDIA Nemotron hosted integration for public prompts, optional localhost private NIM, audit dashboard, and synthetic test suite.
+A portfolio MVP with a rule-based sensitive-data classifier, fail-closed routing, NVIDIA Nemotron hosted integration for public prompts, optional localhost private NIM, audit dashboard, and synthetic test suite.
 
 ## Quickstart
 
