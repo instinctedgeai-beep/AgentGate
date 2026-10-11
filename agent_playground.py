@@ -5,6 +5,7 @@ import streamlit as st
 
 from nemotron_agent import run_agent
 from approval_demo import render_approval_demo
+from agent_timeline import build_timeline
 
 
 EXAMPLE_PROMPTS = {
@@ -77,6 +78,30 @@ def render_agent_playground():
                 "Check the terminal for connection details."
             )
             return
+
+    st.subheader("Execution timeline")
+
+    timeline = build_timeline(prompt, result)
+
+    for index, event in enumerate(timeline, 1):
+        status = event["status"]
+
+        if status in ("COMPLETED", "CLOUD", "ALLOW"):
+            symbol = "✅"
+        elif status in ("BLOCKED", "ERROR"):
+            symbol = "🛑"
+        elif status in ("APPROVAL_REQUIRED", "ACTION_REQUIRED"):
+            symbol = "⏳"
+        else:
+            symbol = "🔹"
+
+        with st.container(border=True):
+            st.markdown(
+                f"**{index}. {symbol} {event['stage']}**"
+            )
+            st.caption(
+                f"{status} — {event['detail']}"
+            )
 
     st.subheader("Execution status")
 

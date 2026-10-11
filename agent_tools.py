@@ -24,17 +24,32 @@ CUSTOMERS = {
 
 
 
+
 def search_documents(query: str) -> dict:
-    """Search synthetic documents without exposing restricted content."""
+    """Search synthetic documents using keywords and safe redaction."""
+
+    import re
+
+    terms = set(re.findall(r"[a-z0-9]+", query.lower()))
+    stopwords = {
+        "the", "a", "an", "and", "or", "for", "of",
+        "in", "on", "to", "about", "find", "show",
+        "me", "what", "is", "please", "summarize",
+    }
+    terms -= stopwords
 
     matches = []
 
     for doc_id, document in DOCUMENTS.items():
         searchable = (
-            document["title"] + " " + document["content"]
+            doc_id + " " +
+            document["title"] + " " +
+            document["content"]
         ).lower()
 
-        if query.lower() not in searchable:
+        if not terms or not any(
+            term in searchable for term in terms
+        ):
             continue
 
         if document["classification"] != "PUBLIC":
@@ -52,6 +67,7 @@ def search_documents(query: str) -> dict:
         })
 
     return {"results": matches}
+
 
 
 

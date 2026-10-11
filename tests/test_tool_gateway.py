@@ -138,5 +138,47 @@ class ToolGatewayTests(unittest.TestCase):
         self.assertEqual(result["status"], "APPROVAL_REQUIRED")
 
 
+    def test_keyword_search_finds_public_document(self):
+        result = run_tool(
+            "search_documents",
+            {"query": "AgentGate product overview"},
+        )
+
+        self.assertEqual(result["status"], "COMPLETED")
+        self.assertTrue(
+            any(
+                doc["id"] == "product"
+                for doc in result["result"]["results"]
+            )
+        )
+
+    def test_unrelated_search_returns_no_documents(self):
+        result = run_tool(
+            "search_documents",
+            {"query": "quantum zebra telescope"},
+        )
+
+        self.assertEqual(result["status"], "COMPLETED")
+        self.assertEqual(result["result"]["results"], [])
+
+    def test_confidential_keyword_search_remains_redacted(self):
+        result = run_tool(
+            "search_documents",
+            {"query": "synthetic revenue projection"},
+        )
+
+        self.assertEqual(result["status"], "COMPLETED")
+
+        documents = result["result"]["results"]
+
+        self.assertNotIn("$2.4M", str(documents))
+        self.assertTrue(
+            any(
+                doc.get("status") == "ACCESS_DENIED"
+                for doc in documents
+            )
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

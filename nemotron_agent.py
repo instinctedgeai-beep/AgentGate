@@ -57,9 +57,15 @@ def run_agent(prompt: str, client=None) -> dict:
             "role": "system",
             "content": (
                 "You are the AgentGate enterprise assistant. "
-                "Use tools when helpful. Never claim a tool "
-                "ran unless its result confirms completion. "
-                "You cannot approve your own tool calls."
+                "You may request tools when necessary. "
+                "Use search_documents for public document questions. "
+                "Use short, relevant search queries. "
+                "If a tool returns no matching documents, explain that "
+                "no matching information was found rather than requesting "
+                "another tool call. "
+                "Never claim an action ran unless its result confirms "
+                "completion. You cannot approve your own tool calls."
+
             ),
         },
         {"role": "user", "content": prompt},
@@ -183,6 +189,7 @@ def run_agent(prompt: str, client=None) -> dict:
     final_response = client.chat.completions.create(
         model=MODEL,
         messages=messages,
+        tool_choice="none",
         temperature=1.0,
         top_p=0.95,
         max_tokens=1024,
