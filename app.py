@@ -3,6 +3,7 @@ import csv
 import html
 import json
 from pathlib import Path
+from agent_playground import render_agent_playground
 
 import pandas as pd
 import streamlit as st
@@ -92,7 +93,11 @@ def activity_chart(rows):
     return pd.DataFrame(data).set_index('Request')
 
 st.markdown('''<div class="ag-top"><div class="ag-brand"><div class="ag-mark">⬡</div><div><div class="ag-name">AgentGate</div><div class="ag-sub">POLICY INTELLIGENCE</div></div></div><div class="ag-env">● LOCAL PROTOTYPE</div></div>''', unsafe_allow_html=True)
-control, audit = st.tabs(['Workspace','Evaluation & audit'])
+control, audit, agent = st.tabs([
+    'Workspace',
+    'Evaluation & audit',
+    'AI Agent Playground'
+])
 
 with control:
     st.markdown('''<div class="ag-hero"><div class="ag-overline">AI GOVERNANCE / CONTROL CENTER</div><div class="ag-h1">Every request. <em>Under control.</em></div><div class="ag-lead">Make confident routing decisions for enterprise AI agents — inspect the input, understand the policy, and see the outcome.</div></div>''',unsafe_allow_html=True)
@@ -192,3 +197,6 @@ with audit:
         st.download_button('Export audit JSON',data=json.dumps(log,indent=2),file_name='agentgate-audit.json',mime='application/json')
     else:
         st.info('No audit events in this session.')
+
+with agent:
+    render_agent_playground()
