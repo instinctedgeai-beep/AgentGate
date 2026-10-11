@@ -23,16 +23,36 @@ CUSTOMERS = {
 }
 
 
+
 def search_documents(query: str) -> dict:
-    """Search fictional company documents."""
-    matches = [
-        {"id": doc_id, **document}
-        for doc_id, document in DOCUMENTS.items()
-        if query.lower() in (
+    """Search synthetic documents without exposing restricted content."""
+
+    matches = []
+
+    for doc_id, document in DOCUMENTS.items():
+        searchable = (
             document["title"] + " " + document["content"]
         ).lower()
-    ]
+
+        if query.lower() not in searchable:
+            continue
+
+        if document["classification"] != "PUBLIC":
+            matches.append({
+                "id": doc_id,
+                "title": "[Restricted document]",
+                "classification": "RESTRICTED",
+                "status": "ACCESS_DENIED",
+            })
+            continue
+
+        matches.append({
+            "id": doc_id,
+            **document,
+        })
+
     return {"results": matches}
+
 
 
 def lookup_customer(customer_id: str) -> dict:
