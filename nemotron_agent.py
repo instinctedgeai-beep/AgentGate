@@ -9,6 +9,7 @@ from openai import OpenAI
 from agent_schemas import TOOL_SCHEMAS
 from policy_engine import inspect
 from tool_gateway import run_tool
+from agent_audit import AgentAudit
 
 from dotenv import load_dotenv
 
@@ -21,21 +22,38 @@ MODEL = "nvidia/nemotron-3-super-120b-a12b"
 def run_agent(prompt: str, client=None) -> dict:
     """Perform one policy-governed Nemotron interaction."""
 
+    audit = AgentAudit()
+
+    def finish(result: dict) -> dict:
+        """Attach audit information to the final result."""
+        audit.record(
+            "AGENT_OUTCOME",
+            result.get("status", "UNKNOWN"),
+        )
+        result["audit"] = audit.summary()
+        return result
+
     if not isinstance(prompt, str) or not prompt.strip():
-        return {
+        return finish({
             "status": "BLOCKED",
             "reason": "Prompt must be a non-empty string",
-        }
+        })
 
     decision = inspect(prompt)
 
+    audit.record(
+        "PROMPT_INSPECTION",
+        decision.route,
+        decision.policy_id,
+    )
+
     # Private prompts never reach hosted NVIDIA inference.
     if decision.route != "CLOUD":
-        return {
+        return finish({
             "status": "BLOCKED",
             "reason": "Private requests cannot use hosted Nemotron",
             "policy_id": decision.policy_id,
-        }
+        })
 
     if client is None:
         api_key = os.getenv("NVIDIA_API_KEY")
@@ -71,26 +89,52 @@ def run_agent(prompt: str, client=None) -> dict:
         {"role": "user", "content": prompt},
     ]
 
-    response = client.chat.completions.create(
-        model=MODEL,
-        messages=messages,
-        tools=TOOL_SCHEMAS,
-        tool_choice="auto",
-        temperature=1.0,
-        top_p=0.95,
-        max_tokens=1024,
-        stream=False,
+
+    audit.record(
+        "MODEL_REQUEST",
+        "STARTED",
+        "Hosted Nemotron inference",
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            tools=TOOL_SCHEMAS,
+            tool_choice="auto",
+            temperature=1.0,
+            top_p=0.95,
+            max_tokens=1024,
+            stream=False,
+        )
+    except Exception:
+        audit.record(
+            "MODEL_REQUEST",
+            "ERROR",
+            "Hosted inference failed",
+        )
+        return finish({
+            "status": "ERROR",
+            "reason": "Hosted model request failed",
+            "tools": [],
+        })
+
+    audit.record(
+        "MODEL_RESPONSE",
+        "RECEIVED",
+        "Hosted Nemotron response",
     )
 
     message = response.choices[0].message
     calls = message.tool_calls or []
 
+
     if not calls:
-        return {
+        return finish({
             "status": "COMPLETED",
             "answer": message.content or "",
             "tools": [],
-        }
+        })
 
     results = []
 
@@ -100,7 +144,14 @@ def run_agent(prompt: str, client=None) -> dict:
 
         try:
             arguments = json.loads(call.function.arguments)
+
         except (ValueError, TypeError):
+            audit.record(
+                "TOOL_POLICY",
+                "BLOCKED",
+                "Invalid JSON arguments",
+            )
+
             results.append({
                 "tool": tool_name,
                 "status": "BLOCKED",
@@ -108,22 +159,37 @@ def run_agent(prompt: str, client=None) -> dict:
             })
             continue
 
+        # Execute through AgentGate's policy gateway.
         tool_result = run_tool(tool_name, arguments)
+
+        # Record the gateway's returned decision.
+        audit.record(
+            "TOOL_POLICY",
+            tool_result["status"],
+            tool_name,
+        )
+
+        # Only record execution when the tool completed.
+        if tool_result["status"] == "COMPLETED":
+            audit.record(
+                "TOOL_EXECUTION",
+                "COMPLETED",
+                tool_name,
+            )
 
         results.append({
             "tool": tool_name,
             **tool_result,
         })
 
-    
     # Stop if any call is restricted, failed, or awaiting approval.
     # Nothing from these results is sent back to NVIDIA.
     if any(item["status"] != "COMPLETED" for item in results):
-        return {
+        return finish({
             "status": "ACTION_REQUIRED",
             "answer": "",
             "tools": results,
-        }
+        })
 
     # Only explicitly public document-search results may be
     # returned to NVIDIA's hosted inference endpoint.
@@ -131,32 +197,33 @@ def run_agent(prompt: str, client=None) -> dict:
 
     for item in results:
         if item["tool"] != "search_documents":
-            return {
+            return finish({
                 "status": "BLOCKED",
                 "answer": "",
                 "reason": "Tool output not approved for hosted inference",
                 "tools": [],
-            }
+            })
+
 
         documents = item["result"].get("results", [])
 
         if not isinstance(documents, list):
-            return {
+            return finish({
                 "status": "BLOCKED",
                 "reason": "Unexpected tool output",
                 "tools": [],
-            }
+            })
 
         for document in documents:
             if (
                 not isinstance(document, dict)
                 or document.get("classification") != "PUBLIC"
             ):
-                return {
+                return finish({
                     "status": "BLOCKED",
                     "reason": "Restricted document output",
                     "tools": [],
-                }
+                })
 
         safe_results.append(item["result"])
 
@@ -186,28 +253,54 @@ def run_agent(prompt: str, client=None) -> dict:
             "content": json.dumps(tool_result),
         })
 
-    final_response = client.chat.completions.create(
-        model=MODEL,
-        messages=messages,
-        tool_choice="none",
-        temperature=1.0,
-        top_p=0.95,
-        max_tokens=1024,
-        stream=False,
+
+    audit.record(
+        "MODEL_REQUEST",
+        "STARTED",
+        "Hosted final response",
+    )
+
+    try:
+        final_response = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            tool_choice="none",
+            temperature=1.0,
+            top_p=0.95,
+            max_tokens=1024,
+            stream=False,
+        )
+    except Exception:
+        audit.record(
+            "MODEL_REQUEST",
+            "ERROR",
+            "Hosted final response failed",
+        )
+        return finish({
+            "status": "ERROR",
+            "reason": "Final model request failed",
+            "tools": results,
+        })
+
+    audit.record(
+        "MODEL_RESPONSE",
+        "RECEIVED",
+        "Hosted final response",
     )
 
     final_message = final_response.choices[0].message
 
     # Never execute additional tool calls in this prototype.
     if final_message.tool_calls:
-        return {
+        return finish({
             "status": "BLOCKED",
             "reason": "Additional tool rounds are disabled",
             "tools": results,
-        }
+        })
 
-    return {
+
+    return finish({
         "status": "COMPLETED",
         "answer": final_message.content or "",
         "tools": results,
-    }
+    })

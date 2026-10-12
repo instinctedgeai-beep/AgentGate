@@ -261,6 +261,92 @@ class NemotronAgentTests(unittest.TestCase):
         # Confidential tool data must not trigger
         # a second hosted model request.
         client.chat.completions.create.assert_called_once()
+
+    def test_first_model_failure_returns_audit(self):
+        client = Mock()
+        client.chat.completions.create.side_effect = (
+            RuntimeError("Synthetic API outage")
+        )
+
+        result = run_agent(
+            "Explain AgentGate briefly.",
+            client=client,
+        )
+
+        self.assertEqual(result["status"], "ERROR")
+        self.assertIn("audit", result)
+        self.assertTrue(any(
+            event["status"] == "ERROR"
+            for event in result["audit"]["events"]
+        ))
+        self.assertNotIn(
+            "Synthetic API outage",
+            json.dumps(result["audit"]),
+        )
+
+    def test_final_model_failure_returns_audit(self):
+        client = fake_client([
+            fake_tool(
+                "search_documents",
+                {"query": "product"},
+            )
+        ])
+
+        first_response = (
+            client.chat.completions.create.return_value
+        )
+
+        client.chat.completions.create.side_effect = [
+            first_response,
+            RuntimeError("Synthetic final API outage"),
+        ]
+
+        result = run_agent(
+            "Find the public product overview.",
+            client=client,
+        )
+
+        self.assertEqual(result["status"], "ERROR")
+        self.assertIn("audit", result)
+        self.assertTrue(any(
+            event["status"] == "ERROR"
+            for event in result["audit"]["events"]
+        ))
+        self.assertEqual(
+            client.chat.completions.create.call_count,
+            2,
+        )
+
+    def test_successful_request_has_complete_audit(self):
+        client = fake_client(content="AgentGate is an AI governance tool.")
+
+        result = run_agent(
+            "Explain AgentGate briefly.",
+            client=client,
+        )
+
+        self.assertEqual(result["status"], "COMPLETED")
+        self.assertIn("audit", result)
+
+        audit = result["audit"]
+        self.assertTrue(audit["request_id"])
+        self.assertGreaterEqual(audit["duration_ms"], 0)
+
+        events = audit["events"]
+        self.assertEqual(
+            [event["event_type"] for event in events],
+            [
+                "PROMPT_INSPECTION",
+                "MODEL_REQUEST",
+                "MODEL_RESPONSE",
+                "AGENT_OUTCOME",
+            ],
+        )
+
+        self.assertEqual(events[-1]["status"], "COMPLETED")
+        self.assertEqual(audit["event_count"], len(events))
+
+
         
 if __name__ == "__main__":
     unittest.main()
