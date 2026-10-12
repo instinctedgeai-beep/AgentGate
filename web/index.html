@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AgentGate Console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Crect width=%2224%22 height=%2224%22 rx=%225%22 fill=%22%23111113%22/%3E%3Cpath d=%22M9 4.5H5.5v15H9M15 4.5h3.5v15H15%22 fill=%22none%22 stroke=%22%23edeef0%22 stroke-width=%222%22/%3E%3Crect x=%229.6%22 y=%229.6%22 width=%224.8%22 height=%224.8%22 transform=%22rotate(45 12 12)%22 fill=%22%23ffa057%22/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..125,300..700&family=Schibsted+Grotesk:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+<div class="atmo" aria-hidden="true"><div class="atmo-live"></div></div>
+<div class="shell">
+  <header class="topbar">
+    <span class="live-wire" aria-hidden="true"></span>
+    <div class="topbar-in">
+      <a class="brand" href="#switchboard" aria-label="AgentGate">
+        <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path class="post l" pathLength="1" d="M8.6 3.4H4.6v17.2h4"/><path class="post r" pathLength="1" d="M15.4 3.4h4v17.2h-4"/><rect class="token" x="9.5" y="9.5" width="5" height="5"/></svg>
+        <span class="wordmark"><b>Agent</b>Gate</span>
+      </a>
+      <nav class="nav" aria-label="Sections">
+        <a href="#switchboard" data-view="switchboard"><span class="nl">Route</span></a>
+        <a href="#activity" data-view="activity"><span class="nl">Activity</span></a>
+        <a href="#gateway" data-view="gateway"><span class="nl">Gateway</span><span class="count" id="nav-pending" hidden>0</span></a>
+        <a href="#evidence" data-view="evidence"><span class="nl">Evidence</span></a>
+        <a href="#agent" data-view="agent"><span class="nl">Agent</span></a>
+      </nav>
+      <div class="env">
+        <div class="mode" role="radiogroup" aria-label="Execution mode">
+          <span class="thumb" aria-hidden="true"></span>
+          <button role="radio" data-mode="simulate" aria-checked="true" title="Decisions are real; no model is called">Simulate</button>
+          <button role="radio" data-mode="live" aria-checked="false" title="Cloud-eligible prompts are sent to hosted Nemotron">Live</button>
+        </div>
+        <p class="sr" id="mode-note" aria-live="polite"></p>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <!-- ROUTE: prompt on the left, the switchboard instrument on the right -->
+    <section class="view" id="view-switchboard" data-title="Route">
+      <div class="route">
+        <form class="composer" id="composer" autocomplete="off">
+          <label class="hero-label" for="prompt">Route a prompt</label>
+          <p class="lede">Every prompt is checked for sensitive data before any model sees it. Public ones may go to hosted Nemotron; sensitive requests require private processing or are blocked.</p>
+          <div class="field">
+            <textarea id="prompt" rows="4" placeholder="Ask anything an employee might send to a model"></textarea>
+            <div class="field-foot">
+              <div class="chips" id="samples"></div>
+              <div class="field-act">
+                <span class="kbd-hint"><kbd>⌘</kbd><kbd>↵</kbd></span>
+                <button class="btn primary" type="submit" id="btn-route">Route prompt</button>
+              </div>
+            </div>
+          </div>
+          <div class="route-result" id="route-result" aria-live="polite" hidden></div>
+        </form>
+
+        <div class="board">
+          <svg class="flow" id="flow" viewBox="0 0 1000 290" role="img" aria-label="Routing flow from prompt through inspection to cloud, private or held">
+          <defs>
+            <linearGradient id="gate-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--ink-3)"/><stop offset="1" stop-color="var(--ink-2)"/></linearGradient>
+            <clipPath id="gate-clip"><rect width="136" height="166" rx="14"/></clipPath>
+          </defs>
+          <path class="wire" id="w-in" d="M118 145 H392"/>
+          <path class="wire c" id="w-c" d="M528 145 C640 145 640 58 760 58 H802"/>
+          <path class="wire p" id="w-p" d="M528 145 H802"/>
+          <path class="wire h" id="w-h" d="M528 145 C640 145 640 232 760 232 H802"/>
+          <g class="node-in" id="node-in" transform="translate(86 145)"><circle r="32"/><text y="-4" class="t-cap">Prompt</text><text y="12" class="t-sub">in</text></g>
+          <g class="gate" id="gate" transform="translate(392 62)">
+            <rect width="136" height="166" rx="14" fill="url(#gate-fill)"/>
+            <g clip-path="url(#gate-clip)"><rect class="scan" id="scan" width="136" height="3"/></g>
+            <text x="68" y="54" class="t-cap">Inspection</text>
+            <text x="68" y="98" class="t-big" id="gate-n">16</text>
+            <text x="68" y="119" class="t-sub">patterns</text>
+          </g>
+          <g class="dest c" id="d-c" transform="translate(802 34)"><rect width="176" height="48" rx="10"/><text x="16" y="21" class="t-lbl" data-long="Cloud-eligible" data-short="Cloud">Cloud-eligible</text><text x="16" y="37" class="t-sub2">hosted Nemotron</text><text x="160" y="32" class="t-num" id="n-c">0</text></g>
+          <g class="dest p" id="d-p" transform="translate(802 121)"><rect width="176" height="48" rx="10"/><text x="16" y="21" class="t-lbl" data-long="Private route" data-short="Private">Private route</text><text x="16" y="37" class="t-sub2">localhost NIM only</text><text x="160" y="32" class="t-num" id="n-p">0</text></g>
+          <g class="dest h" id="d-h" transform="translate(802 208)"><rect width="176" height="48" rx="10"/><text x="16" y="21" class="t-lbl" data-long="Held" data-short="Held">Held</text><text x="16" y="37" class="t-sub2">nothing transmitted</text><text x="160" y="32" class="t-num" id="n-h">0</text></g>
+          <g id="tags"></g>
+          <g id="packets"></g>
+        </svg>
+        </div>
+        <div class="route-cta">
+          <button class="replay" type="button" id="btn-demo">
+            <span class="replay-ico" aria-hidden="true"><svg viewBox="0 0 16 16"><path d="M5 3.5v9l7.5-4.5z"/></svg></span>
+            <span class="replay-txt"><span id="replay-label">Replay demo traffic</span><small id="replay-sub">12 sample requests through the gate</small></span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ACTIVITY: a short report on this session -->
+    <section class="view" id="view-activity" data-title="Activity" hidden>
+      <header class="head">
+        <div class="head-text">
+          <h1>Activity</h1>
+          <p class="summary"><span class="board-stats"><b id="st-total">0</b> requests inspected this session, <b id="st-private">0%</b> kept private. Median inspection took <b id="st-median">—</b> and <b id="st-signals">0</b> sensitive patterns matched.</span></p>
+        </div>
+        <div class="head-actions"><button class="btn ghost" id="btn-clear">Clear session</button></div>
+      </header>
+      <div class="mixbar" aria-hidden="true"><i class="c" id="mix-c"></i><i class="p" id="mix-p"></i><i class="h" id="mix-h"></i></div>
+
+      <section class="panel activity" id="activity-panel">
+        <div class="p-row">
+          <div><h2 class="p-title">Routing over time</h2><p class="p-sub2">Running total per lane, in the order requests arrived.</p></div>
+          <ul class="legend" aria-label="Legend"><li><i class="c"></i>Cloud</li><li><i class="p"></i>Private</li><li><i class="h"></i>Held</li></ul>
+        </div>
+        <div class="act-wrap" id="activity"></div>
+        <p class="empty" id="activity-empty">Route a prompt or replay demo traffic to draw the timeline.</p>
+      </section>
+
+      <div class="split split-r">
+        <article class="receipt" id="receipt" aria-live="polite">
+          <div class="receipt-empty">
+            <h2 class="p-title">Latest decision</h2>
+            <p class="p-sub">Route a prompt to see which patterns matched, which policy applied and where the request went.</p>
+            <ol class="how"><li><b>Inspect</b> 16 sensitive-data patterns</li><li><b>Route</b> cloud, private or held</li><li><b>Record</b> metadata only</li></ol>
+          </div>
+        </article>
+        <section class="panel">
+          <div class="p-row"><h2 class="p-title">Patterns matched</h2><p class="p-meta" id="sig-meta"></p></div>
+          <div class="sigs" id="sigs"><p class="empty">No sensitive patterns have matched yet.</p></div>
+        </section>
+      </div>
+
+      <section class="panel">
+        <div class="p-row"><h2 class="p-title">Decisions</h2><p class="p-meta">Metadata only</p></div>
+        <div class="tscroll"><table class="tbl" id="stream"><thead><tr><th>Time</th><th>Request</th><th>Route</th><th>Policy</th><th>Patterns</th><th>Outcome</th></tr></thead><tbody></tbody></table></div>
+        <p class="empty" id="stream-empty">Waiting for the first request.</p>
+      </section>
+    </section>
+
+    <!-- GATEWAY: a real three-step sequence -->
+    <section class="view" id="view-gateway" data-title="Gateway" hidden>
+      <header class="head">
+        <div class="head-text"><h1>Tool gateway</h1>
+          <p class="summary">An agent proposes a tool call, the gateway checks it, and a local demo reviewer can approve restricted actions. Each approval works once, for those exact arguments.</p></div>
+      </header>
+      <div class="steps">
+        <form class="step" id="toolform" autocomplete="off">
+          <h2 class="step-h"><span class="step-n">1</span>Propose a call</h2>
+          <div class="tools" id="tools" role="radiogroup" aria-label="Tool"></div>
+          <div class="fields" id="fields"></div>
+          <div class="presets" id="presets"><span>Try</span></div>
+          <button class="btn primary" type="submit">Send to gateway</button>
+        </form>
+        <section class="step">
+          <h2 class="step-h"><span class="step-n">2</span>Gateway checks</h2>
+          <ol class="checks" id="checks" aria-live="polite"></ol>
+          <p class="empty" id="checks-empty">Send a call to watch each check run in order.</p>
+        </section>
+        <section class="step">
+          <div class="p-row"><h2 class="step-h"><span class="step-n">3</span>Local approval demo</h2><p class="p-meta" id="q-meta"></p></div>
+          <div class="queue" id="queue"><p class="empty">Nothing waiting. Try <b>Customer record</b> or <b>Finance forecast</b>.</p></div>
+        </section>
+      </div>
+      <div class="split lower gw">
+        <section class="panel"><h2 class="p-title">Rules</h2>
+          <div class="tscroll"><table class="tbl" id="policy"><thead><tr><th>Tool</th><th>Condition</th><th>Outcome</th></tr></thead><tbody></tbody></table></div></section>
+        <section class="panel"><h2 class="p-title">Recent calls</h2>
+          <div class="tscroll"><table class="tbl" id="toollog"><thead><tr><th>Time</th><th>Tool</th><th>Outcome</th><th>Reason</th></tr></thead><tbody></tbody></table></div>
+          <p class="empty" id="toollog-empty">No calls yet.</p></section>
+      </div>
+    </section>
+
+    <!-- EVIDENCE -->
+    <section class="view" id="view-evidence" data-title="Evidence" hidden>
+      <header class="head">
+        <div class="head-text"><h1>Evidence</h1>
+          <p class="summary">Synthetic classifier evaluation and routing audit for this local session.</p></div>
+      </header>
+      <div class="figures" id="figures"></div>
+      <section class="panel">
+        <div class="p-row"><h2 class="p-title">Evaluation cases</h2>
+          <div class="filter" id="case-filter" role="tablist"><button data-f="all" aria-selected="true">All</button><button data-f="CLOUD">Cloud</button><button data-f="PRIVATE">Private</button><button data-f="miss">Misclassified</button></div></div>
+        <div class="tscroll tall"><table class="tbl" id="cases"><thead><tr><th>Prompt</th><th>Expected</th><th>Actual</th><th>Patterns</th><th class="r">ms</th></tr></thead><tbody></tbody></table></div>
+      </section>
+      <section class="panel">
+        <div class="p-row"><div><h2 class="p-title">Audit trail</h2><p class="p-sub2">Routing metadata only. Agent-run audit events appear in the Agent tab. Raw prompts are not retained in session audit.</p></div><button class="btn ghost sm" id="btn-export">Export JSON</button></div>
+        <div class="tscroll"><table class="tbl" id="audit"><thead><tr><th>Timestamp</th><th>Request</th><th>Route</th><th>Policy</th><th>Patterns</th><th>Reason</th><th>Mode</th><th>Status</th><th class="r">Inspect ms</th><th class="r">Inference ms</th><th class="r">Tokens</th></tr></thead><tbody></tbody></table></div>
+        <p class="empty" id="audit-empty">No audit events in this session.</p>
+      </section>
+    </section>
+
+    <!-- AGENT -->
+    <section class="view" id="view-agent" data-title="Agent" hidden>
+      <header class="head">
+        <div class="head-text"><h1>Agent run</h1>
+          <p class="summary">Nemotron with the gateway in the loop. Private prompts are refused before any model call, and tool results only go back to the model when they are public.</p></div>
+      </header>
+      <div class="split gw">
+        <form class="step" id="agentform" autocomplete="off">
+          <label class="step-h" for="agent-prompt">Ask the agent</label>
+          <div class="field">
+            <textarea id="agent-prompt" rows="4" placeholder="Find the public product overview and summarize it"></textarea>
+            <div class="field-foot"><div class="chips" id="agent-samples"></div><div class="field-act"><button class="btn primary" type="submit" id="btn-agent">Run agent</button></div></div>
+          </div>
+        </form>
+        <section class="step" id="agent-out" aria-live="polite"><h2 class="step-h">Run</h2><p class="empty">No run yet.</p></section>
+      </div>
+      <section class="panel" id="agent-observability" style="margin-top:24px">
+        <div class="p-row"><div><h2 class="p-title">Agent observability</h2><p class="p-sub2">Session-local metadata, not organization-wide telemetry.</p></div></div>
+        <div class="figures" id="agent-metrics"></div>
+        <div class="tscroll"><table class="tbl" id="agent-history"><thead><tr><th>Time</th><th>Request ID</th><th>Status</th><th>Events</th><th class="r">Latency ms</th></tr></thead><tbody></tbody></table></div>
+        <p class="empty" id="agent-history-empty">No agent requests in this session.</p>
+      </section>
+    </section>
+  </main>
+</div>
+<div class="toasts" id="toasts" aria-live="assertive"></div>
+<script src="console.js"></script>
+</body>
+</html>
