@@ -6,6 +6,7 @@ import streamlit as st
 from nemotron_agent import run_agent
 from approval_demo import render_approval_demo
 from agent_timeline import build_timeline
+from agent_metrics import calculate_metrics
 
 
 EXAMPLE_PROMPTS = {
@@ -27,6 +28,8 @@ EXAMPLE_PROMPTS = {
 def render_agent_playground():
     """Render the policy-governed AI agent interface."""
 
+    if "agent_records" not in st.session_state:
+        st.session_state.agent_records = []
     st.title("AI Agent Playground")
 
     st.caption(
@@ -36,6 +39,29 @@ def render_agent_playground():
     st.info(
         "Prototype using synthetic enterprise data. "
         "Public prompts may be sent to NVIDIA's hosted API."
+    )
+
+    metrics = calculate_metrics(st.session_state.agent_records)
+
+    st.markdown("### Agent Observability")
+
+    a, b, c, d = st.columns(4)
+
+    a.metric(
+        "Total requests",
+        metrics["total_requests"],
+    )
+    b.metric(
+        "Blocked / Pending",
+        metrics["blocked_requests"],
+    )
+    c.metric(
+        "Tool executions",
+        metrics["tool_executions"],
+    )
+    d.metric(
+        "Avg. latency",
+        f'{metrics["average_latency_ms"]:.0f} ms',
     )
 
     example = st.selectbox(
@@ -78,6 +104,11 @@ def render_agent_playground():
                 "Check the terminal for connection details."
             )
             return
+    st.session_state.agent_records.append({
+        "status": result.get("status"),
+        "audit": result.get("audit", {}),
+    })
+    st.rerun()
 
     st.subheader("Execution timeline")
 
