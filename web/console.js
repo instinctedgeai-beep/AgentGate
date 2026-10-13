@@ -35,6 +35,8 @@
     renderKeys: {},
     animating: 0,
     reviewerToken: null,
+    gatewayRequest: null,
+    gatewayPolling: null,
   };
 
   // ── API ──────────────────────────────────────────────────────────────
@@ -59,6 +61,14 @@
       if (res.status === 401 && token) {
         S.reviewerToken = null;
         renderReviewer();
+        S.snap = {
+          history: [],
+          approvals: [],
+          tool_log: [],
+          agent_history: [],
+        };
+        S.renderKeys = {};
+        renderAll();
       }
       throw new Error(data.error || `Request failed (${res.status})`);
     }
@@ -74,14 +84,198 @@
     $("#reviewer-logout").hidden = !authenticated;
 
     $("#reviewer-status").textContent = authenticated
-      ? "Reviewer authenticated — approvals unlocked"
-      : "Locked — authentication required";
+      ? "Reviewer authenticated — Governance Center unlocked"
+      : "Locked — reviewer authentication required";
+
+    const protectedArea = $("#activity-protected");
+    if (protectedArea) {
+      protectedArea.hidden = !authenticated;
+    }
   }
 
-  async function refresh() {
-    S.snap = await api("/api/state");
-    renderAll();
+  function syncGatewayExecution(request) {
+    if (!request) return;
+
+    const items = $$("#checks li");
+    if (items.length < 5) return;
+
+    const execution = items[4];
+    const dot = execution.querySelector(".dot");
+    if (!dot) return;
+
+    const completed =
+      request.status === "CONSUMED" &&
+      request.execution_status === "COMPLETED";
+
+    const rejected = request.status === "REJECTED";
+    const failed =
+      request.status === "CONSUMED" &&
+      request.execution_status !== "COMPLETED";
+
+    execution.classList.remove("skip", "done", "pass", "fail", "wait");
+
+    if (completed) {
+      execution.classList.add("done", "pass");
+      dot.textContent = "✓";
+      execution.lastElementChild.innerHTML = pill("COMPLETED");
+    } else if (rejected) {
+      execution.classList.add("skip");
+      dot.textContent = "";
+      execution.lastElementChild.innerHTML = pill("REJECTED");
+    } else if (failed) {
+      execution.classList.add("done", "fail");
+      dot.textContent = "✕";
+      execution.lastElementChild.innerHTML = pill("FAILED");
+    } else {
+      execution.classList.add("done", "wait");
+      dot.textContent = "…";
+      execution.lastElementChild.innerHTML = pill("PENDING");
+    }
   }
+
+  function renderGatewayStatus() {
+    const box = $("#gateway-status");
+    if (!box) return;
+
+    const request = S.gatewayRequest;
+    const displayKey = request
+      ? `${request.token}:${request.status}:${request.execution_status}`
+      : "empty";
+
+    if (box.dataset.displayKey === displayKey) return;
+    box.dataset.displayKey = displayKey;
+
+    if (!request) {
+      box.innerHTML = `
+        <p class="empty">
+          Submit a restricted tool request to see its approval status.
+        </p>`;
+      return;
+    }
+
+    const status = request.execution_status === "COMPLETED"
+      ? "COMPLETED"
+      : request.status;
+
+    const messages = {
+      PENDING: "Awaiting authorized reviewer approval.",
+      APPROVED: "Approved by reviewer. Execution is pending.",
+      REJECTED: "Request rejected. The tool will not execute.",
+      CONSUMED: "Approval consumed.",
+      COMPLETED: "Approved and executed successfully.",
+      FAILED: "Execution failed.",
+    };
+
+    box.innerHTML = `
+      <div class="req">
+        <div class="req-top">
+          <strong>${esc(request.tool)}</strong>
+          ${pill(status)}
+        </div>
+        <p class="req-meta">
+          ${esc(messages[status] || "Status unavailable.")}
+        </p>
+      </div>`;
+  }
+
+  async function checkGatewayStatus() {
+    const request = S.gatewayRequest;
+    if (!request?.token) return;
+
+    try {
+      const state = await api("/api/request-status", {
+        status_token: request.token,
+      });
+
+      // Ignore responses for a request that has since been replaced.
+      if (S.gatewayRequest !== request) return;
+
+      request.status = state.status;
+      request.execution_status = state.execution_status;
+
+      renderGatewayStatus();
+      syncGatewayExecution(request);
+
+      if (["REJECTED", "CONSUMED"].includes(state.status)) {
+        clearInterval(S.gatewayPolling);
+        S.gatewayPolling = null;
+      }
+    } catch (error) {
+      // Do not silently turn a failed status check into an approval.
+      console.warn("Could not update Gateway approval status:", error);
+    }
+  }
+
+  function watchGatewayRequest(entry) {
+    if (S.gatewayPolling !== null) {
+      clearInterval(S.gatewayPolling);
+      S.gatewayPolling = null;
+    }
+
+    S.gatewayRequest = null;
+
+    if (entry.status !== "APPROVAL_REQUIRED" || !entry.status_token) {
+      renderGatewayStatus();
+      return;
+    }
+
+    S.gatewayRequest = {
+      token: entry.status_token,
+      tool: entry.tool,
+      status: "PENDING",
+      execution_status: null,
+    };
+
+    renderGatewayStatus();
+
+    S.gatewayPolling = setInterval(checkGatewayStatus, 3000);
+  }
+
+async function refresh() {
+  const publicState = await api("/api/public-state");
+
+  if (S.reviewerToken) {
+    try {
+      S.snap = await api("/api/state", undefined, S.reviewerToken);
+    } catch (error) {
+      S.reviewerToken = null;
+      S.snap = {
+        history: [],
+        approvals: [],
+        tool_log: [],
+        agent_history: [],
+      };
+      renderReviewer();
+    }
+  } else {
+    S.snap = {
+      history: [],
+      approvals: [],
+      tool_log: [],
+      agent_history: [],
+    };
+  }
+
+  S.publicState = publicState;
+  renderAll();
+}
+
+  async function refreshProtectedActivity() {
+    if (!S.reviewerToken) return;
+
+    try {
+      await refresh();
+    } catch (error) {
+      console.warn("Activity refresh failed:", error);
+    }
+  }
+
+  setInterval(() => {
+    if (S.reviewerToken && location.hash === "#activity") {
+      refreshProtectedActivity();
+    }
+  }, 4000);
+
   function toast(msg, err = false) {
     const t = document.createElement("div");
     t.className = "toast" + (err ? " err" : "");
@@ -434,13 +628,15 @@
       const act = a.status === "PENDING"
         ? `<div class="req-act"><button class="btn primary sm" data-act="approve" data-id="${a.approval_id}">Approve</button><button class="btn sm" data-act="reject" data-id="${a.approval_id}">Reject</button></div>`
         : a.status === "APPROVED" ? `<div class="req-act"><button class="btn primary sm" data-act="execute" data-id="${a.approval_id}">Execute once</button></div>` : "";
-      // only the most recent used approval shows its result; older ones stay compact
-      const out = a.outcome?.result && a === list.find((x) => x.outcome?.result) ? `<pre>${esc(JSON.stringify(a.outcome.result, null, 2))}</pre>` : "";
-      const stamp = a.status === "CONSUMED" ? `<span class="stampmark">USED</span>` : a.status === "REJECTED" ? `<span class="stampmark" style="color:var(--held)">DENIED</span>` : "";
       return `<div class="req" data-status="${a.status}">
         <div class="req-h"><b>${esc(a.tool)}</b>${pill(a.status)}</div>
         <div class="req-args">${esc(args)}</div>
-        <div class="req-meta">Requested at ${esc(clock(a.created_at))}, approval <span class="m">${esc(a.approval_id)}</span></div>${act}${out}${stamp}</div>`;
+        <div class="req-meta">
+          Requested at ${esc(clock(a.created_at))} ·
+          Request <span class="m">${esc(a.approval_id.slice(0, 8))}</span>
+        </div>
+        ${act}
+        </div>`;
     }).join("");
   }
 
@@ -449,15 +645,22 @@
     $("#policy tbody").innerHTML = p.map((r) => `<tr><td class="m">${esc(r.tool)}</td><td>${esc(r.condition)}</td><td>${pill(r.outcome)}</td></tr>`).join("");
   }
   function renderToolLog() {
-    const rows = S.snap.tool_log.slice(0, 8);
+    const rows = (S.publicState?.recent_tool_statuses || []).slice(0, 8);
+
     if (!changed("toollog", rows)) return;
+
     $("#toollog-empty").hidden = rows.length > 0;
+
     $("#toollog tbody").innerHTML = rows.map((e) => {
-      const key = e.time + e.tool + e.status;
-      const fresh = !S.seenTool.has(key); S.seenTool.add(key);
-      return `<tr class="${fresh ? "new" : ""}"><td class="m">${esc(clock(e.time))}</td><td class="m">${esc(e.tool)}</td><td>${pill(e.status)}</td><td>${esc(e.reason)}</td></tr>`;
+      return `<tr>
+        <td class="m">${esc(clock(e.time))}</td>
+        <td class="m">Tool request</td>
+        <td>${pill(e.status)}</td>
+        <td>Policy event recorded</td>
+      </tr>`;
     }).join("");
   }
+
 
   // evidence
   function renderFigures() {
@@ -595,10 +798,9 @@
     };
     $$(".nav a").forEach((a) => { if (a.dataset.view === view) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
     placeIndicator();
-    if (same) { /* nothing to swap */ }
-    else if (!S.booted || !current || reduced) swap();
-    else if (document.startViewTransition) document.startViewTransition(swap);
-    else { swap(); const v = $("#view-" + view); void v.offsetWidth; v.classList.add("swap"); }
+    if (!same) {
+      swap();
+    }
     document.title = `${$("#view-" + view).dataset.title} · AgentGate`;
     if (view === "evidence" && !S.cases.length) loadCases();
   }
@@ -691,7 +893,8 @@
 
       S.reviewerToken = result.token;
       renderReviewer();
-      toast("Reviewer authenticated");
+      await refresh();
+      toast("Governance Center unlocked");
     }));
 
     $("#reviewer-logout").addEventListener("click", guard(async () => {
@@ -712,9 +915,19 @@
     $("#presets").addEventListener("click", (ev) => { const b = ev.target.closest("[data-p]"); if (b) setPreset(b.dataset.p); });
     $("#toolform").addEventListener("submit", guard(async (ev) => {
       ev.preventDefault();
+
       const args = {};
-      S.status.tools[S.tool].forEach((f) => { args[f] = S.args[S.tool]?.[f] ?? ""; });
-      const entry = await api("/api/tools/call", { tool: S.tool, arguments: args });
+      S.status.tools[S.tool].forEach((f) => {
+        args[f] = S.args[S.tool]?.[f] ?? "";
+      });
+
+      const entry = await api("/api/tools/call", {
+        tool: S.tool,
+        arguments: args,
+      });
+
+      watchGatewayRequest(entry);
+
       await playChecks(entry);
       await refresh();
     }));
@@ -742,12 +955,37 @@
       renderCases();
     });
     $("#btn-export").addEventListener("click", guard(async () => {
-      const data = await api("/api/audit.json");
-      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-      const a = Object.assign(document.createElement("a"), { href: url, download: "agentgate-audit.json" });
-      document.body.append(a); a.click(); a.remove();
+      if (!S.reviewerToken) {
+        toast("Unlock Activity with reviewer credentials to export the audit.", true);
+        return;
+      }
+
+      const data = await api(
+        "/api/audit.json",
+        undefined,
+        S.reviewerToken
+      );
+
+      const url = URL.createObjectURL(
+        new Blob(
+          [JSON.stringify(data, null, 2)],
+          { type: "application/json" }
+        )
+      );
+
+      const a = Object.assign(document.createElement("a"), {
+        href: url,
+        download: "agentgate-audit.json",
+      });
+
+      document.body.append(a);
+      a.click();
+      a.remove();
+
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast(`Exported ${data.length} audit event${data.length === 1 ? "" : "s"}.`);
+      toast(
+        `Exported ${data.length} audit event${data.length === 1 ? "" : "s"}.`
+      );
     }));
 
     // agent

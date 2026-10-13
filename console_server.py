@@ -16,6 +16,7 @@ import json
 import os
 import re
 import threading
+import secrets
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -70,6 +71,7 @@ class Console:
         self.results = {}          # approval_id -> execution outcome
         self.agent_history = []   # metadata only; never store prompts or tool outputs
         self.reviewer_auth = ReviewerAuth()
+        self.status_tokens = {}  # Random status token -> approval ID
 
     # -- read models -------------------------------------------------------
     def status(self) -> dict:
@@ -89,22 +91,64 @@ class Console:
             "policy": [{"tool": t, "condition": c, "outcome": o} for t, c, o in TOOL_POLICY_MATRIX],
         }
 
+
+    def public_snapshot(self) -> dict:
+        """Return limited operational counts, never approval details."""
+        with self.lock:
+            pending = sum(
+                req.status == "PENDING"
+                for req in self.approvals.requests.values()
+            )
+            return {
+                "pending_approvals": pending,
+                "total_requests": len(self.history),
+                "recent_tool_statuses": [
+                    {
+                        "status": item["status"],
+                        "time": item["time"],
+                    }
+                    for item in self.tool_log[:10]
+                ],
+            }
+
     def snapshot(self) -> dict:
         with self.lock:
             return {
                 "history": list(self.history),
                 "approvals": [self._approval(r) for r in sorted(
                     self.approvals.requests.values(), key=lambda r: r.created_at, reverse=True)],
-                "tool_log": list(self.tool_log),
+                "tool_log": [
+                    {
+                        "time": item["time"],
+                        "tool": item["tool"],
+                        "status": item["status"],
+                        "reason": item["reason"],
+                    }
+                    for item in self.tool_log
+                ],
                 "agent_history": list(self.agent_history),
             }
 
     def _approval(self, req) -> dict:
-        return {"approval_id": req.approval_id, "tool": req.tool_name, "arguments": req.arguments,
-                "status": req.status, "created_at": req.created_at,
-                "outcome": self.results.get(req.approval_id),
-                "reviewed_by": req.reviewed_by,
-                "reviewed_at": req.reviewed_at,}
+        outcome = self.results.get(req.approval_id)
+
+        execution_status = (
+            outcome.get("status")
+            if isinstance(outcome, dict)
+            else None
+        )
+
+        return {
+            "approval_id": req.approval_id,
+            "tool": req.tool_name,
+            "arguments": req.arguments,
+            "status": req.status,
+            "created_at": req.created_at,
+            "execution_status": execution_status,
+            "reviewed_by": req.reviewed_by,
+            "reviewed_at": req.reviewed_at,
+        }
+
 
     def evaluation(self) -> dict:
         import csv
@@ -147,12 +191,51 @@ class Console:
         entry = {"time": _now(), "tool": tool, "arguments": arguments if isinstance(arguments, dict) else {},
                  "status": outcome["status"], "reason": outcome["reason"], "approval_id": None,
                  "result": outcome.get("result")}
+
+        status_token = None
         with self.lock:
             if outcome["status"] == "APPROVAL_REQUIRED":
-                entry["approval_id"] = self.approvals.create_request(tool, arguments).approval_id
+                request = self.approvals.create_request(tool, arguments)
+                entry["approval_id"] = request.approval_id
+
+                # Separate, unpredictable capability for checking status.
+                status_token = secrets.token_urlsafe(32)
+                self.status_tokens[status_token] = request.approval_id
+
             self.tool_log.insert(0, entry)
             del self.tool_log[200:]
-        return entry
+
+        # The status token must not be written into shared tool logs.
+        response = dict(entry)
+        if status_token is not None:
+            response["status_token"] = status_token
+
+        return response
+
+    def request_status(self, token: str) -> dict:
+        """Return only the approval state for a specific status token."""
+        with self.lock:
+            approval_id = self.status_tokens.get(token)
+
+            if approval_id is None:
+                raise ApiError(404, "Request status not found")
+
+            request = self.approvals.requests.get(approval_id)
+
+            if request is None:
+                raise ApiError(404, "Request status not found")
+
+            execution = self.results.get(approval_id)
+            execution_status = (
+                execution.get("status")
+                if isinstance(execution, dict)
+                else None
+            )
+
+            return {
+                "status": request.status,
+                "execution_status": execution_status,
+            }
 
     def decide(self, approval_id: str, action: str, reviewer_id: str | None = None) -> dict:
         with self.lock:
@@ -175,8 +258,20 @@ class Console:
             else:
                 raise ApiError(400, "action must be approve, reject or execute")
             if not ok:
-                raise ApiError(409, f"Cannot {action} a request that is {req.status.lower()}")
-            return self._approval(req)
+                raise ApiError(
+                    409,
+                    f"Cannot {action} a request that is {req.status.lower()}",
+                )
+
+            response = self._approval(req)
+
+            if action == "execute":
+                response["outcome"] = {
+                    "status": outcome["status"],
+                }
+
+            return response
+
 
     def agent(self, prompt: str) -> dict:
         try:
@@ -256,13 +351,51 @@ def make_handler(console: Console):
             path = urlparse(self.path).path.rstrip("/")
             try:
                 if method == "GET":
-                    routes = {"/api/status": console.status, "/api/state": console.snapshot,
-                              "/api/evaluation": console.evaluation}
-                    if path in routes:
-                        return self._json(200, routes[path]())
-                    if path == "/api/audit.json":
-                        return self._json(200, console.audit(), filename="agentgate-audit.json")
+                    if path == "/api/status":
+                        return self._json(200, console.status())
+
+                    if path == "/api/public-state":
+                        return self._json(200, console.public_snapshot())
+
+                    if path in (
+                        "/api/state",
+                        "/api/audit.json",
+                    ):
+                        authorization = self.headers.get(
+                            "Authorization", ""
+                        )
+                        scheme, _, token = authorization.partition(" ")
+
+                        if scheme != "Bearer" or not token:
+                            raise ApiError(
+                                401,
+                                "Reviewer authentication required",
+                            )
+
+                        reviewer_id = console.reviewer_auth.authenticate(
+                            token
+                        )
+
+                        if reviewer_id is None:
+                            raise ApiError(
+                                401,
+                                "Reviewer session invalid or expired",
+                            )
+
+                        if path == "/api/state":
+                            return self._json(200, console.snapshot())
+
+                        return self._json(
+                            200,
+                            console.audit(),
+                            filename="agentgate-audit.json",
+                        )
+
+                    if path == "/api/evaluation":
+                        return self._json(200, console.evaluation())
+
                     raise ApiError(404, "Not found")
+
                 body = self._body()
                 if path == "/api/reviewer/login":
                     token = console.reviewer_auth.login(body.get("secret"))
@@ -294,7 +427,19 @@ def make_handler(console: Console):
                     console.clear()
                     return self._json(200, {"ok": True})
                 if path == "/api/tools/call":
-                    return self._json(200, console.call_tool(_text(body, "tool", 64), body.get("arguments")))
+                    return self._json(
+                        200,
+                        console.call_tool(
+                            _text(body, "tool", 64),
+                            body.get("arguments"),
+                        ),
+                    )
+                if path == "/api/request-status":
+                    token = _text(body, "status_token", 256)
+                    return self._json(
+                        200,
+                        console.request_status(token),
+                    )
                 m = re.fullmatch(
                     r"/api/approvals/([0-9a-f]{16})/(approve|reject|execute)",
                     path,

@@ -589,3 +589,45 @@ kbd { border: 1px solid var(--rule-2); border-bottom-width: 2px; border-radius: 
   margin: 0;
   font-size: 12px;
 }
+
+/* Agent: compact desktop layout */
+@media (min-width: 900px) {
+  #view-agent {
+    gap: 16px;
+  }
+
+  #view-agent .head {
+    margin-bottom: 0;
+  }
+
+  #view-agent .split.gw {
+    gap: 24px;
+  }
+
+  #view-agent #agent-observability {
+    margin-top: 0 !important;
+  }
+
+  #view-agent #agent-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Evidence: bring evaluation results closer to the heading */
+#view-evidence {
+  gap: 12px;
+}
+
+#view-evidence .head {
+  margin-bottom: 0;
+}
+
+#view-evidence .fig {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+#view-evidence .panel {
+  padding-top: 12px;
+  gap: 12px;
+}

@@ -86,6 +86,152 @@ class ConsoleStateTests(unittest.TestCase):
         self.assertEqual(self.console.snapshot()["approvals"], [])
 
 
+    def test_status_token_is_unique_per_request(self):
+        first = self.console.call_tool(
+            "lookup_customer",
+            {"customer_id": "CUST-1001"},
+        )
+        second = self.console.call_tool(
+            "lookup_customer",
+            {"customer_id": "CUST-1001"},
+        )
+
+        self.assertNotEqual(
+            first["status_token"],
+            second["status_token"],
+        )
+
+        self.assertNotEqual(
+            first["approval_id"],
+            second["approval_id"],
+        )
+
+    def test_status_tokens_are_request_isolated(self):
+        first = self.console.call_tool(
+            "lookup_customer",
+            {"customer_id": "CUST-1001"},
+        )
+        second = self.console.call_tool(
+            "lookup_customer",
+            {"customer_id": "CUST-1001"},
+        )
+
+        self.console.decide(
+            first["approval_id"],
+            "approve",
+            reviewer_id="test-reviewer",
+        )
+
+        self.assertEqual(
+            self.console.request_status(first["status_token"])["status"],
+            "APPROVED",
+        )
+        self.assertEqual(
+            self.console.request_status(second["status_token"])["status"],
+            "PENDING",
+        )
+
+    def test_invalid_status_token_is_rejected(self):
+        with self.assertRaises(ApiError) as context:
+            self.console.request_status("invalid-status-token")
+
+        self.assertEqual(context.exception.status, 404)
+
+    def test_status_response_contains_no_private_data(self):
+        request = self.console.call_tool(
+            "lookup_customer",
+            {"customer_id": "CUST-1001"},
+        )
+
+        self.console.decide(
+            request["approval_id"],
+            "approve",
+            reviewer_id="test-reviewer",
+        )
+        self.console.decide(
+            request["approval_id"],
+            "execute",
+            reviewer_id="test-reviewer",
+        )
+
+        result = self.console.request_status(
+            request["status_token"]
+        )
+
+        self.assertEqual(
+            result,
+            {
+                "status": "CONSUMED",
+                "execution_status": "COMPLETED",
+            },
+        )
+
+        serialized = json.dumps(result)
+
+        for sensitive_value in (
+            "CUST-1001",
+            "Alex Morgan",
+            "test-reviewer",
+            request["approval_id"],
+            request["status_token"],
+        ):
+            self.assertNotIn(sensitive_value, serialized)
+
+
+    def test_activity_snapshot_excludes_customer_results(self):
+        request = self.console.call_tool(
+            "lookup_customer",
+            {"customer_id": "CUST-1001"},
+        )
+
+        approval_id = request["approval_id"]
+
+        self.console.decide(
+            approval_id, "approve", reviewer_id="test-reviewer"
+        )
+        self.console.decide(
+            approval_id, "execute", reviewer_id="test-reviewer"
+        )
+
+        snapshot = self.console.snapshot()
+        serialized = json.dumps(snapshot)
+
+        self.assertNotIn("Alex Morgan", serialized)
+        self.assertNotIn('"classification": "PRIVATE"', serialized)
+
+        approval = next(
+            item for item in snapshot["approvals"]
+            if item["approval_id"] == approval_id
+        )
+        self.assertEqual(approval["execution_status"], "COMPLETED")
+        self.assertNotIn("outcome", approval)
+
+        for entry in snapshot["tool_log"]:
+            self.assertNotIn("result", entry)
+            self.assertNotIn("arguments", entry)
+
+    def test_execution_response_excludes_customer_results(self):
+        request = self.console.call_tool(
+            "lookup_customer",
+            {"customer_id": "CUST-1001"},
+        )
+
+        approval_id = request["approval_id"]
+
+        self.console.decide(
+            approval_id, "approve", reviewer_id="test-reviewer"
+        )
+
+        response = self.console.decide(
+            approval_id, "execute", reviewer_id="test-reviewer"
+        )
+
+        self.assertEqual(
+            response["outcome"],
+            {"status": "COMPLETED"},
+        )
+        self.assertNotIn("Alex Morgan", json.dumps(response))
+
 class ConsoleHttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -151,6 +297,50 @@ class ConsoleHttpTests(unittest.TestCase):
                     {},
                 )
                 self.assertEqual(status, 401)
+
+    def test_request_status_endpoint_requires_valid_capability(self):
+        status, request = self.request(
+            "/api/tools/call",
+            {
+                "tool": "lookup_customer",
+                "arguments": {"customer_id": "CUST-1001"},
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(request["status"], "APPROVAL_REQUIRED")
+
+        status_token = request["status_token"]
+
+        # Valid capability can read only its own status.
+        status, result = self.request(
+            "/api/request-status",
+            {"status_token": status_token},
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            result,
+            {
+                "status": "PENDING",
+                "execution_status": None,
+            },
+        )
+
+        # Invalid capability cannot access the request.
+        status, _ = self.request(
+            "/api/request-status",
+            {"status_token": "invalid-token"},
+        )
+
+        self.assertEqual(status, 404)
+
+        # No approval ID or customer data in public responses.
+        serialized = json.dumps(result)
+
+        self.assertNotIn(request["approval_id"], serialized)
+        self.assertNotIn("CUST-1001", serialized)
+        self.assertNotIn("Alex Morgan", serialized)
 
     def test_unauthenticated_execution_is_rejected(self):
         status, _ = self.request(
@@ -299,3 +489,34 @@ class ConsoleHttpTests(unittest.TestCase):
             endpoint + "/execute", {}
         )
         self.assertEqual(status, 401)
+
+    def test_activity_data_requires_authentication(self):
+        for path in ("/api/state", "/api/audit.json"):
+            with self.subTest(path=path):
+                status, _ = self.request(path)
+                self.assertEqual(status, 401)
+
+    def test_authenticated_reviewer_can_view_activity(self):
+        status, login = self.request(
+            "/api/reviewer/login",
+            {"secret": "synthetic-test-secret"},
+        )
+        self.assertEqual(status, 200)
+
+        token = login["token"]
+
+        for path in ("/api/state", "/api/audit.json"):
+            with self.subTest(path=path):
+                status, _ = self.request(path, token=token)
+                self.assertEqual(status, 200)
+
+    def test_public_state_excludes_approval_details(self):
+        status, data = self.request("/api/public-state")
+
+        self.assertEqual(status, 200)
+        self.assertIn("pending_approvals", data)
+
+        self.assertNotIn("approvals", data)
+        self.assertNotIn("history", data)
+        self.assertNotIn("tool_log", data)
+        self.assertNotIn("agent_history", data)

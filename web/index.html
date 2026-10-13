@@ -92,45 +92,128 @@
       </div>
     </section>
 
-    <!-- ACTIVITY: a short report on this session -->
+
+    <!-- ACTIVITY: Protected governance center -->
     <section class="view" id="view-activity" data-title="Activity" hidden>
       <header class="head">
         <div class="head-text">
           <h1>Activity</h1>
-          <p class="summary"><span class="board-stats"><b id="st-total">0</b> requests inspected this session, <b id="st-private">0%</b> kept private. Median inspection took <b id="st-median">—</b> and <b id="st-signals">0</b> sensitive patterns matched.</span></p>
+          <p class="summary">
+            <span class="board-stats">
+              <b id="st-total">0</b> requests inspected this session,
+              <b id="st-private">0%</b> kept private.
+              Median inspection took <b id="st-median">—</b>
+              and <b id="st-signals">0</b> sensitive patterns matched.
+            </span>
+          </p>
         </div>
-        <div class="head-actions"><button class="btn ghost" id="btn-clear">Clear session</button></div>
+        <div class="head-actions">
+          <button class="btn ghost" id="btn-clear">Clear session</button>
+        </div>
       </header>
-      <div class="mixbar" aria-hidden="true"><i class="c" id="mix-c"></i><i class="p" id="mix-p"></i><i class="h" id="mix-h"></i></div>
 
-      <section class="panel activity" id="activity-panel">
-        <div class="p-row">
-          <div><h2 class="p-title">Routing over time</h2><p class="p-sub2">Running total per lane, in the order requests arrived.</p></div>
-          <ul class="legend" aria-label="Legend"><li><i class="c"></i>Cloud</li><li><i class="p"></i>Private</li><li><i class="h"></i>Held</li></ul>
-        </div>
-        <div class="act-wrap" id="activity"></div>
-        <p class="empty" id="activity-empty">Route a prompt or replay demo traffic to draw the timeline.</p>
+      <!-- Reviewer authentication -->
+      <section class="panel" id="activity-auth">
+        <form id="reviewer-form" autocomplete="off">
+          <label for="reviewer-secret">Reviewer authentication</label>
+
+          <div class="reviewer-controls">
+            <input
+              id="reviewer-secret"
+              type="password"
+              placeholder="Reviewer Secret"
+              autocomplete="off"
+              required
+            />
+            <button class="btn primary sm" type="submit" id="reviewer-login">
+              Unlock Activity
+            </button>
+            <button class="btn sm" type="button" id="reviewer-logout" hidden>
+              Lock session
+            </button>
+          </div>
+
+          <p class="p-meta" id="reviewer-status" role="status">
+            Locked — authentication required
+          </p>
+        </form>
       </section>
 
-      <div class="split split-r">
-        <article class="receipt" id="receipt" aria-live="polite">
-          <div class="receipt-empty">
-            <h2 class="p-title">Latest decision</h2>
-            <p class="p-sub">Route a prompt to see which patterns matched, which policy applied and where the request went.</p>
-            <ol class="how"><li><b>Inspect</b> 16 sensitive-data patterns</li><li><b>Route</b> cloud, private or held</li><li><b>Record</b> metadata only</li></ol>
+      <!-- Protected Activity content -->
+      <div id="activity-protected" hidden>
+
+        <!-- Reviewer approval queue -->
+        <section class="panel" id="activity-approvals">
+          <div class="p-row">
+            <div>
+              <h2 class="p-title">Pending human approvals</h2>
+              <p class="p-sub2">
+                Review restricted tool requests before execution.
+              </p>
+            </div>
+            <p class="p-meta" id="q-meta"></p>
           </div>
-        </article>
-        <section class="panel">
-          <div class="p-row"><h2 class="p-title">Patterns matched</h2><p class="p-meta" id="sig-meta"></p></div>
-          <div class="sigs" id="sigs"><p class="empty">No sensitive patterns have matched yet.</p></div>
+
+          <div class="queue" id="queue">
+            <p class="empty">No approval requests waiting.</p>
+          </div>
         </section>
-      </div>
+        <div class="mixbar" aria-hidden="true">
+          <i class="c" id="mix-c"></i>
+          <i class="p" id="mix-p"></i>
+          <i class="h" id="mix-h"></i>
+        </div>
+
+        <section class="panel activity" id="activity-panel">
+          <div class="p-row">
+            <div>
+              <h2 class="p-title">Routing over time</h2>
+              <p class="p-sub2">Running total per lane, in the order requests arrived.</p>
+            </div>
+            <ul class="legend" aria-label="Legend">
+              <li><i class="c"></i>Cloud</li>
+              <li><i class="p"></i>Private</li>
+              <li><i class="h"></i>Held</li>
+            </ul>
+          </div>
+          <div class="act-wrap" id="activity"></div>
+          <p class="empty" id="activity-empty">
+            Route a prompt or replay demo traffic to draw the timeline.
+          </p>
+        </section>
+
+        <div class="split split-r">
+          <article class="receipt" id="receipt" aria-live="polite">
+            <div class="receipt-empty">
+              <h2 class="p-title">Latest decision</h2>
+              <p class="p-sub">
+                Route a prompt to see which patterns matched,
+                which policy applied and where the request went.
+              </p>
+              <ol class="how">
+                <li><b>Inspect</b> 16 sensitive-data patterns</li>
+                <li><b>Route</b> cloud, private or held</li>
+                <li><b>Record</b> metadata only</li>
+              </ol>
+            </div>
+          </article>
+
+          <section class="panel">
+            <div class="p-row">
+              <h2 class="p-title">Patterns matched</h2>
+              <p class="p-meta" id="sig-meta"></p>
+            </div>
+            <div class="sigs" id="sigs">
+              <p class="empty">No sensitive patterns have matched yet.</p>
+            </div>
+          </section>
+        </div>
 
       <section class="panel">
         <div class="p-row"><h2 class="p-title">Decisions</h2><p class="p-meta">Metadata only</p></div>
         <div class="tscroll"><table class="tbl" id="stream"><thead><tr><th>Time</th><th>Request</th><th>Route</th><th>Policy</th><th>Patterns</th><th>Outcome</th></tr></thead><tbody></tbody></table></div>
         <p class="empty" id="stream-empty">Waiting for the first request.</p>
-      </section>
+      </section></div><!-- End activity-protected -->
     </section>
 
     <!-- GATEWAY: a real three-step sequence -->
@@ -147,43 +230,36 @@
           <div class="presets" id="presets"><span>Try</span></div>
           <button class="btn primary" type="submit">Send to gateway</button>
         </form>
+
         <section class="step">
-          <h2 class="step-h"><span class="step-n">2</span>Gateway checks</h2>
+          <h2 class="step-h">
+            <span class="step-n">2</span>Gateway checks
+          </h2>
           <ol class="checks" id="checks" aria-live="polite"></ol>
-          <p class="empty" id="checks-empty">Send a call to watch each check run in order.</p>
+          <p class="empty" id="checks-empty">
+            Send a call to watch each check run in order.
+          </p>
         </section>
+
         <section class="step">
-          <div class="p-row"><h2 class="step-h"><span class="step-n">3</span>Local approval demo</h2><p class="p-meta" id="q-meta"></p></div>
-          <form id="reviewer-form" autocomplete="off">
-            <label for="reviewer-secret">Reviewer authentication</label>
+          <div class="p-row">
+            <h2 class="step-h">
+              <span class="step-n">3</span>Human approval
+            </h2>
+          </div>
 
-            <div class="reviewer-controls">
-              <input
-                id="reviewer-secret"
-                type="password"
-                placeholder="Reviewer Secret"
-                autocomplete="off"
-                required
-              />
-              <button class="btn primary sm" type="submit" id="reviewer-login">
-                Unlock approvals
-              </button>
-              <button class="btn sm" type="button" id="reviewer-logout" hidden>
-                Lock session
-              </button>
-            </div>
-
-            <p class="p-meta" id="reviewer-status" role="status">
-              Locked — authentication required
+          <div class="queue" id="gateway-status">
+            <p class="empty">
+              Restricted tool requests are sent to the protected
+              Activity page for authorized reviewer approval.
             </p>
-          </form>
-          <div class="queue" id="queue">
-
-<p class="empty">Nothing waiting. Try <b>Customer record</b> or <b>Finance forecast</b>.</p></div>
+          </div>
         </section>
       </div>
+
       <div class="split lower gw">
         <section class="panel"><h2 class="p-title">Rules</h2>
+
           <div class="tscroll"><table class="tbl" id="policy"><thead><tr><th>Tool</th><th>Condition</th><th>Outcome</th></tr></thead><tbody></tbody></table></div></section>
         <section class="panel"><h2 class="p-title">Recent calls</h2>
           <div class="tscroll"><table class="tbl" id="toollog"><thead><tr><th>Time</th><th>Tool</th><th>Outcome</th><th>Reason</th></tr></thead><tbody></tbody></table></div>
