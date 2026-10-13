@@ -31,8 +31,6 @@ The primary interface is a custom HTML, CSS, and JavaScript governance console w
 | Evidence | Review synthetic evaluation results and routing history |
 | Agent | Interact with Nemotron and inspect execution audits |
 
-The original Streamlit dashboard remains available as an alternative prototype interface.
-
 ## Getting Started
 
 Requires Python 3.12 or another compatible Python version.
@@ -51,12 +49,6 @@ python console_server.py
 ```
 
 Open http://127.0.0.1:8600
-
-Alternatively, launch the Streamlit interface:
-
-```bash
-streamlit run app.py
-```
 
 ## NVIDIA Configuration
 
