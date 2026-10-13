@@ -25,6 +25,7 @@ from approval_manager import ApprovalManager
 from dashboard_data import DEMO_PROMPTS, SAMPLE_PROMPTS, TOOL_FIELDS, TOOL_POLICY_MATRIX, TOOL_PRESETS
 from engine import PATTERNS, execute, inspect
 from tool_gateway import run_tool
+from reviewer_auth import ReviewerAuth
 
 try:  # optional, mirrors nemotron_agent.py
     from dotenv import load_dotenv
@@ -68,6 +69,7 @@ class Console:
         self.tool_log = []         # newest first
         self.results = {}          # approval_id -> execution outcome
         self.agent_history = []   # metadata only; never store prompts or tool outputs
+        self.reviewer_auth = ReviewerAuth()
 
     # -- read models -------------------------------------------------------
     def status(self) -> dict:
@@ -100,7 +102,9 @@ class Console:
     def _approval(self, req) -> dict:
         return {"approval_id": req.approval_id, "tool": req.tool_name, "arguments": req.arguments,
                 "status": req.status, "created_at": req.created_at,
-                "outcome": self.results.get(req.approval_id)}
+                "outcome": self.results.get(req.approval_id),
+                "reviewed_by": req.reviewed_by,
+                "reviewed_at": req.reviewed_at,}
 
     def evaluation(self) -> dict:
         import csv
@@ -150,15 +154,15 @@ class Console:
             del self.tool_log[200:]
         return entry
 
-    def decide(self, approval_id: str, action: str) -> dict:
+    def decide(self, approval_id: str, action: str, reviewer_id: str | None = None) -> dict:
         with self.lock:
             req = self.approvals.requests.get(approval_id)
             if req is None:
                 raise ApiError(404, "Unknown approval request")
             if action == "approve":
-                ok = self.approvals.approve(approval_id)
+                ok = self.approvals.approve(approval_id, reviewer_id=reviewer_id)
             elif action == "reject":
-                ok = self.approvals.reject(approval_id)
+                ok = self.approvals.reject(approval_id, reviewer_id=reviewer_id)
             elif action == "execute":
                 outcome = run_tool(req.tool_name, req.arguments, approval_id=approval_id,
                                    approval_manager=self.approvals)
@@ -260,6 +264,28 @@ def make_handler(console: Console):
                         return self._json(200, console.audit(), filename="agentgate-audit.json")
                     raise ApiError(404, "Not found")
                 body = self._body()
+                if path == "/api/reviewer/login":
+                    token = console.reviewer_auth.login(body.get("secret"))
+                    if token is None:
+                        raise ApiError(401, "Invalid reviewer credentials")
+                    return self._json(200, {
+                        "token": token,
+                        "expires_in": console.reviewer_auth.session_seconds,
+                    })
+                if path == "/api/reviewer/logout":
+                    authorization = self.headers.get("Authorization", "")
+                    scheme, _, token = authorization.partition(" ")
+
+                    if scheme != "Bearer" or not token:
+                        raise ApiError(401, "Reviewer authentication required")
+
+                    reviewer_id = console.reviewer_auth.authenticate(token)
+
+                    if reviewer_id is None:
+                        raise ApiError(401, "Reviewer session invalid or expired")
+
+                    console.reviewer_auth.logout(token)
+                    return self._json(200, {"ok": True})
                 if path == "/api/route":
                     return self._json(200, console.route(_text(body, "prompt"), body.get("mode", "simulate")))
                 if path == "/api/demo":
@@ -269,9 +295,34 @@ def make_handler(console: Console):
                     return self._json(200, {"ok": True})
                 if path == "/api/tools/call":
                     return self._json(200, console.call_tool(_text(body, "tool", 64), body.get("arguments")))
-                m = re.fullmatch(r"/api/approvals/([0-9a-f]{16})/(approve|reject|execute)", path)
+                m = re.fullmatch(
+                    r"/api/approvals/([0-9a-f]{16})/(approve|reject|execute)",
+                    path,
+                )
+
                 if m:
-                    return self._json(200, console.decide(m.group(1), m.group(2)))
+                    action = m.group(2)
+
+                    authorization = self.headers.get("Authorization", "")
+                    scheme, _, token = authorization.partition(" ")
+
+                    if scheme != "Bearer" or not token:
+                        raise ApiError(401, "Reviewer authentication required")
+
+                    reviewer_id = console.reviewer_auth.authenticate(token)
+
+                    if reviewer_id is None:
+                        raise ApiError(401, "Reviewer session invalid or expired")
+
+                    return self._json(
+                        200,
+                        console.decide(
+                            m.group(1),
+                            action,
+                            reviewer_id=reviewer_id,
+                        ),
+                    )
+
                 if path == "/api/agent":
                     return self._json(200, console.agent(_text(body, "prompt")))
                 raise ApiError(404, "Not found")

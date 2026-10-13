@@ -79,6 +79,27 @@ class ApprovalTests(unittest.TestCase):
             )
         )
 
+    def test_approval_records_reviewer(self):
+        self.assertTrue(
+            self.manager.approve(
+                self.request.approval_id,
+                reviewer_id="reviewer-01",
+            )
+        )
+        self.assertEqual(self.request.reviewed_by, "reviewer-01")
+        self.assertIsNotNone(self.request.reviewed_at)
+
+    def test_rejection_records_reviewer(self):
+        self.assertTrue(
+            self.manager.reject(
+                self.request.approval_id,
+                reviewer_id="reviewer-02",
+            )
+        )
+        self.assertEqual(self.request.reviewed_by, "reviewer-02")
+        self.assertIsNotNone(self.request.reviewed_at)
+
+
 
 if __name__ == "__main__":
     unittest.main()

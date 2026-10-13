@@ -541,3 +541,51 @@ kbd { border: 1px solid var(--rule-2); border-bottom-width: 2px; border-radius: 
 }
 .req-args .k { color: var(--faint); font-family: var(--f-body); }
 .rc-why .m { font: 400 11.5px var(--f-mono); color: var(--faint); margin-left: 6px; }
+
+/* Gateway reviewer authentication */
+#reviewer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+#reviewer-form label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--paper);
+}
+
+.reviewer-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#reviewer-secret {
+  min-width: 0;
+  flex: 1 1 160px;
+  padding: 10px 12px;
+  background: var(--ink-2);
+  border: 1px solid var(--rule-2);
+  border-radius: 10px;
+  color: var(--paper);
+}
+
+#reviewer-secret:focus {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 4px var(--wash-2);
+}
+
+#reviewer-form [hidden] {
+  display: none;
+}
+
+#reviewer-status {
+  margin: 0;
+  font-size: 12px;
+}

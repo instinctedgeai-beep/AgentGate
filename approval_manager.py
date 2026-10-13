@@ -12,6 +12,8 @@ class ApprovalRequest:
     tool_name: str
     arguments: dict
     status: str = "PENDING"
+    reviewed_by: str | None = None
+    reviewed_at: str | None = None
     created_at: str = field(
         default_factory=lambda: datetime.now(
             timezone.utc
@@ -35,24 +37,28 @@ class ApprovalManager:
         self.requests[approval_id] = request
         return request
 
-    def approve(self, approval_id):
+
+    def approve(self, approval_id, reviewer_id=None):
         request = self.requests.get(approval_id)
 
         if request is None or request.status != "PENDING":
             return False
 
         request.status = "APPROVED"
+        request.reviewed_by = reviewer_id
+        request.reviewed_at = datetime.now(timezone.utc).isoformat()
         return True
 
-    def reject(self, approval_id):
+    def reject(self, approval_id, reviewer_id=None):
         request = self.requests.get(approval_id)
 
         if request is None or request.status != "PENDING":
             return False
 
         request.status = "REJECTED"
+        request.reviewed_by = reviewer_id
+        request.reviewed_at = datetime.now(timezone.utc).isoformat()
         return True
-
 
     def consume(self, approval_id, tool_name, arguments):
         """Use an approved request exactly once."""

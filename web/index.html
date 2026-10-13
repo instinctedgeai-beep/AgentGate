@@ -154,7 +154,32 @@
         </section>
         <section class="step">
           <div class="p-row"><h2 class="step-h"><span class="step-n">3</span>Local approval demo</h2><p class="p-meta" id="q-meta"></p></div>
-          <div class="queue" id="queue"><p class="empty">Nothing waiting. Try <b>Customer record</b> or <b>Finance forecast</b>.</p></div>
+          <form id="reviewer-form" autocomplete="off">
+            <label for="reviewer-secret">Reviewer authentication</label>
+
+            <div class="reviewer-controls">
+              <input
+                id="reviewer-secret"
+                type="password"
+                placeholder="Reviewer Secret"
+                autocomplete="off"
+                required
+              />
+              <button class="btn primary sm" type="submit" id="reviewer-login">
+                Unlock approvals
+              </button>
+              <button class="btn sm" type="button" id="reviewer-logout" hidden>
+                Lock session
+              </button>
+            </div>
+
+            <p class="p-meta" id="reviewer-status" role="status">
+              Locked — authentication required
+            </p>
+          </form>
+          <div class="queue" id="queue">
+
+<p class="empty">Nothing waiting. Try <b>Customer record</b> or <b>Finance forecast</b>.</p></div>
         </section>
       </div>
       <div class="split lower gw">

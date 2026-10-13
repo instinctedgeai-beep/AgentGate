@@ -34,16 +34,50 @@
     seenTool: new Set(),
     renderKeys: {},
     animating: 0,
+    reviewerToken: null,
   };
 
   // ── API ──────────────────────────────────────────────────────────────
-  async function api(path, body) {
-    const opts = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  async function api(path, body, token = null) {
+    const opts = body === undefined
+      ? {}
+      : {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        };
+
+    if (token) {
+      opts.headers ||= {};
+      opts.headers["Authorization"] = `Bearer ${token}`;
+    }
+
     const res = await fetch(path, opts);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+    if (!res.ok) {
+      if (res.status === 401 && token) {
+        S.reviewerToken = null;
+        renderReviewer();
+      }
+      throw new Error(data.error || `Request failed (${res.status})`);
+    }
+
     return data;
   }
+
+  function renderReviewer() {
+    const authenticated = Boolean(S.reviewerToken);
+
+    $("#reviewer-secret").hidden = authenticated;
+    $("#reviewer-login").hidden = authenticated;
+    $("#reviewer-logout").hidden = !authenticated;
+
+    $("#reviewer-status").textContent = authenticated
+      ? "Reviewer authenticated — approvals unlocked"
+      : "Locked — authentication required";
+  }
+
   async function refresh() {
     S.snap = await api("/api/state");
     renderAll();
@@ -640,6 +674,38 @@
     }));
 
     // gateway
+
+    // Reviewer authentication
+    renderReviewer();
+
+    $("#reviewer-form").addEventListener("submit", guard(async (ev) => {
+      ev.preventDefault();
+
+      const input = $("#reviewer-secret");
+      const secret = input.value;
+
+      // Clear the passphrase from the form immediately.
+      input.value = "";
+
+      const result = await api("/api/reviewer/login", { secret });
+
+      S.reviewerToken = result.token;
+      renderReviewer();
+      toast("Reviewer authenticated");
+    }));
+
+    $("#reviewer-logout").addEventListener("click", guard(async () => {
+      const token = S.reviewerToken;
+
+      if (!token) return;
+
+      // Remove local authorization immediately.
+      S.reviewerToken = null;
+      renderReviewer();
+
+      await api("/api/reviewer/logout", {}, token);
+      toast("Reviewer session locked");
+    }));
     $("#tools").addEventListener("click", (ev) => { const b = ev.target.closest("[data-tool]"); if (b) { S.tool = b.dataset.tool; renderTools(); $("#checks").innerHTML = ""; $("#checks-empty").hidden = false; } });
     $("#fields").addEventListener("input", (ev) => { const f = ev.target.dataset.f; if (f) (S.args[S.tool] ||= {})[f] = ev.target.value; });
     $("#presets").insertAdjacentHTML("beforeend", Object.keys(S.status.presets).map((n) => `<button type="button" data-p="${esc(n)}">${esc(n)}</button>`).join(""));
@@ -656,7 +722,15 @@
       const b = ev.target.closest("[data-act]");
       if (!b) return;
       b.disabled = true;
-      await api(`/api/approvals/${b.dataset.id}/${b.dataset.act}`, {});
+      if (!S.reviewerToken) {
+        throw new Error("Unlock reviewer approvals before continuing.");
+      }
+
+      await api(
+        `/api/approvals/${b.dataset.id}/${b.dataset.act}`,
+        {},
+        S.reviewerToken
+      );
       await refresh();
     }));
 
