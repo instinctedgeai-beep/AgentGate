@@ -2,7 +2,7 @@
 
 ```mermaid
 flowchart TD
-    U[Employee / Demo User] --> UI[Streamlit Control Room]
+    U[Employee / Demo User] --> UI[AgentGate Web Console]
     UI --> AG[Single Nemotron Agent]
     AG --> PROP[Proposed tool call]
     PROP --> P[Policy Engine: ALLOW / DENY / APPROVAL]
@@ -20,7 +20,8 @@ flowchart TD
 ```
 
 ## Current vs planned
-- **Current:** `app.py` (Streamlit), `engine.py` (pattern inspection and routing, execution), `evaluate.py` / `final_test.py` (development checks), `results.csv` / `summary.json` (offline evaluation).
+- **Current:** console_server.py (local HTTP API and console backend), web/ (HTML/CSS/JavaScript frontend), policy_engine.py and engine.py (privacy inspection and routing), model_client.py (model execution), nemotron_agent.py (Nemotron agent orchestration), tool_gateway.py (governed tool execution), approval_manager.py (single-use approvals), agent_audit.py (request-level auditing), and evaluate.py / final_test.py (development evaluation).
+
 - **Planned:** `agent/` (one agent), `tools/` (synthetic tools), `policies/` (declarative policy engine), `observability/` (redacted action events). Add modules incrementally; do not refactor working features until regression tests are in place.
 
 ## Trust boundaries

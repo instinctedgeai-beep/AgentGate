@@ -1,10 +1,14 @@
+
 name: AgentGate CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - feature/nemotron-agent
   pull_request:
-    branches: [main]
+    branches:
+      - main
 
 jobs:
   test:
@@ -20,10 +24,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt
 
       - name: Run regression tests
         run: python -m unittest discover -s tests -v
 
       - name: Check Python syntax
-        run: python -m compileall -q app.py engine.py evaluate.py final_test.py
+        run: python -m compileall -q .

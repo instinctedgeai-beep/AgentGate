@@ -1,47 +1,109 @@
-# AgentGate — Enterprise AI Privacy & Policy Router
 
-A portfolio MVP with a rule-based sensitive-data classifier, fail-closed routing, NVIDIA Nemotron hosted integration for public prompts, optional localhost private NIM, audit dashboard, and synthetic test suite.
+# AgentGate — Enterprise AI Governance
 
-## Quickstart
+**A policy-governed AI agent prototype powered by NVIDIA Nemotron.**
+
+AgentGate explores how organizations can use AI agents while maintaining control over sensitive information, tool execution, and human approvals.
+
+Built with Python, NVIDIA Nemotron, and a custom web console, AgentGate makes AI policy enforcement observable and explainable.
+
+## Features
+
+- **Privacy-aware routing:** Classifies prompts before hosted inference.
+- **NVIDIA Nemotron agent:** Supports tool calling and generates answers from approved public tool results.
+- **Governed tools:** Synthetic document search, customer lookup, and email drafting.
+- **Policy enforcement:** Allows, blocks, or requires approval for tool execution.
+- **Human approvals:** Local approval and rejection workflow with single-use execution authorization.
+- **Document protection:** Redacts confidential synthetic documents.
+- **Agent auditing:** Records request IDs, timestamps, tool outcomes, and execution latency.
+- **Observability:** Tracks request activity, blocked actions, tool executions, and latency.
+- **Automated testing:** 58 regression tests passed locally as of October 2026.
+
+## AgentGate Console
+
+The primary interface is a custom HTML, CSS, and JavaScript governance console with five sections:
+
+| Section | Purpose |
+|---|---|
+| Route | Inspect and route public or sensitive prompts |
+| Activity | Explore routing activity and outcomes |
+| Gateway | Test governed tool execution and local approvals |
+| Evidence | Review synthetic evaluation results and routing history |
+| Agent | Interact with Nemotron and inspect execution audits |
+
+## Getting Started
+
+Requires Python 3.12 or another compatible Python version.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-python evaluate.py
-streamlit run app.py
+python -m pip install -r requirements.txt
+python -m unittest discover -s tests -v
 ```
 
-Default mode is **simulate**; no prompt is sent to any remote API.
+Start the primary console:
 
-To test **live public inference**, generate a key from https://build.nvidia.com/nvidia/nemotron-3-super-120b-a12b , set `export NVIDIA_API_KEY='...'` in your terminal (do not paste into GitHub), switch to live, and submit a benign public prompt.
+```bash
+python console_server.py
+```
 
-**Private means localhost only in this MVP.** Without `PRIVATE_NIM_BASE_URL`, sensitive prompts are blocked in live mode. The example `.env.example` is a template, *not* auto-loaded. A real NIM deployment requires separate GPU/serving setup and is not included. NVIDIA's public hosted API is NOT private/on-premises.
+Open http://127.0.0.1:8600
 
-## Evaluation
+## NVIDIA Configuration
 
-`python evaluate.py` writes `results.csv` and `summary.json` from 30 synthetic labeled prompts. Report accuracy, sensitive recall, and false positive rate as synthetic test metrics, never as real-world privacy assurance. Inspection latency is distinct from end-to-end inference latency. Some test cases intentionally reveal gaps in rule detection.
+Create a local `.env` file using `.env.example` as a reference.
 
-## Scope and limitations
+Set `NVIDIA_API_KEY` to enable hosted inference.
 
-- Regex/keyword classifier only; **not** reliable enterprise DLP. No semantic privacy guarantee.
-- Routing is request-text based, not complete agent tool-call or output interception.
-- No actual OpenShell / NemoClaw integration or security sandbox.
-- API/model costs are not shown because current applicable price cannot be inferred reliably. Token usage can be recorded from live responses.
-- Audits exclude raw prompts to avoid retaining detected secrets. For real deployment also sanitize responses and exception messages.
-- Dashboard audit history is in-memory per Streamlit session, not centralized or immutable.
-- Detection policy is intentionally simple and misses names, confidential contract text, and other non-pattern secrets.
+The console defaults to simulation mode. Hosted inference is an external service and must not receive sensitive information.
 
-## Product brief
+A localhost NIM endpoint can optionally be configured for private routing, but configuring a URL does not deploy or verify a local NIM server.
 
-**User:** enterprise IT / AI platform administrator.
+Never commit API credentials.
 
-**Problem:** teams need visibility into when agents would send sensitive prompts to external inference providers.
+## Architecture
 
-**Solution:** demonstrate transparent pre-inference classification, configurable allow/block routes, and lightweight audit events.
+AgentGate separates:
 
-**Primary success measures:** sensitive recall on a labeled synthetic suite, false-positive rate, median inspection overhead. Additional measured dimension: hosted inference latency when live mode is configured.
+1. Privacy inspection and routing
+2. NVIDIA model inference
+3. Tool policy evaluation
+4. Tool execution and human approval
+5. Request-level auditing and observability
 
-**Non-goals (MVP):** production DLP, self-hosted NIM deployment, sandbox policy enforcement, employee authentication, accurate cloud pricing.
+See [Architecture](docs/ARCHITECTURE.md) and [Product Requirements](docs/PRD.md).
 
-**Next:** swap regex for an enterprise DLP detector, define policies in YAML, enforce routing in a gateway, add tests for prompts with mixed signals, redaction and human override.
+## Testing
+
+Run:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+For optional responsive browser tests:
+
+```bash
+python -m pip install playwright
+python -m playwright install chromium
+python tools/responsive_check.py
+```
+
+The browser tests require the console to be running locally.
+
+## Security Limitations
+
+AgentGate is a portfolio prototype, not a production security system.
+
+- Privacy inspection is pattern-based and may miss sensitive information.
+- Business documents and customer records are synthetic.
+- Local approvals do not authenticate individual reviewers.
+- Approval state and console analytics are held in memory.
+- Tool functions are not operating-system-level sandboxes.
+- Hosted NVIDIA inference must not be treated as on-premises or confidential processing.
+- Synthetic evaluation results do not establish real-world security accuracy.
+
+## Current Direction
+
+AgentGate demonstrates privacy-aware routing, governed agent actions, human oversight, and explainable AI operations. Future development includes stronger authorization, adversarial evaluation, persistent governance logs, and richer operational analytics.
