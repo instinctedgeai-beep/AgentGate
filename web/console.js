@@ -16,7 +16,7 @@
     draft_email: "Prepare an email draft. Never sends.",
   };
   const AGENT_SAMPLES = {
-    "Customer lookup": "Use the lookup_customer tool with customer_id set to TRUSTED_CUSTOMER. AgentGate already has the customer identifier in trusted local context. Do not ask for the identifier or search documents. Request the lookup and wait for authorization.",
+    "Customer lookup": "Look up this customer's record.",
   };
 
   const S = {

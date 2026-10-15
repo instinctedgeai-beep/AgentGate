@@ -215,44 +215,48 @@
       </section></div><!-- End activity-protected -->
     </section>
 
-    <!-- GATEWAY: a real three-step sequence -->
+    <!-- GATEWAY: authenticated AI tool governance -->
     <section class="view" id="view-gateway" data-title="Gateway" hidden>
-      <header class="head">
+        <header class="head gateway-header">
         <div class="head-text">
           <h1>Gateway</h1>
           <p class="summary">
-            Monitor AI activity, review security decisions, and test how
-            AgentGate protects company tools and information.
+            Govern AI agent access to company tools through policy enforcement,
+            scoped permissions, and human approval.
           </p>
+        </div>
+        <div class="gateway-header-auth">
+          <form class="gateway-auth-form" id="requester-form" autocomplete="off">
+            <div class="gateway-auth-heading">
+              <label for="requester-secret">Agent authentication</label>
+              <span class="gateway-auth-lock" aria-hidden="true">Restricted</span>
+            </div>
+
+            <div class="reviewer-controls">
+              <input
+                id="requester-secret"
+                type="password"
+                placeholder="Enter requester API key"
+                autocomplete="off"
+                required
+                aria-describedby="requester-status"
+              />
+              <button class="btn primary sm" type="submit" id="requester-login">
+                Authenticate
+              </button>
+              <button class="btn sm" type="button" id="requester-logout" hidden>
+                Sign out
+              </button>
+            </div>
+
+            <p class="p-meta" id="requester-status" role="status">
+              Authentication required to run AI agents
+            </p>
+          </form>
         </div>
       </header>
 
       <!-- Primary AI agent workflow -->
-
-      <!-- Requester authentication -->
-      <section class="panel" id="gateway-auth">
-        <form id="requester-form" autocomplete="off">
-          <label for="requester-secret">Agent access</label>
-          <div class="reviewer-controls">
-            <input
-              id="requester-secret"
-              type="password"
-              placeholder="Requester API key"
-              autocomplete="off"
-              required
-            />
-            <button class="btn primary sm" type="submit" id="requester-login">
-              Unlock Gateway
-            </button>
-            <button class="btn sm" type="button" id="requester-logout" hidden>
-              Lock Gateway
-            </button>
-          </div>
-          <p class="p-meta" id="requester-status" role="status">
-            Locked — requester authentication required
-          </p>
-        </form>
-      </section>
       <section class="panel" id="gateway-agent">
         <div class="p-row">
           <div>
@@ -273,7 +277,7 @@
           <div class="field">
             <textarea
               id="agent-prompt"
-              rows="4"
+              rows="2"
               placeholder="Find the public product overview and summarize it"
             ></textarea>
 
@@ -324,7 +328,6 @@
       <details
         class="panel"
         id="agent-observability"
-        style="margin-top:24px"
       >
         <summary>Agent diagnostics</summary>
 

@@ -698,3 +698,174 @@ kbd { border: 1px solid var(--rule-2); border-bottom-width: 2px; border-radius: 
   --chart-approval: #a78bfa;
   --chart-blocked: #fb7185;
 }
+
+/* Compact Gateway layout */
+#view-gateway .gateway-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+#view-gateway .gateway-header-auth {
+  flex: 0 1 350px;
+}
+
+#view-gateway .gateway-header-auth .reviewer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#view-gateway .gateway-header-auth input {
+  min-width: 0;
+  flex: 1;
+}
+
+#view-gateway .gateway-header-auth .p-meta {
+  margin: 5px 0 0;
+}
+
+#view-gateway #agent-prompt {
+  min-height: 76px;
+  height: 76px;
+  resize: vertical;
+}
+
+#view-gateway #agent-observability,
+#view-gateway .gateway-manual {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+/* Tighten collapsed technical sections */
+#view-gateway #agent-observability:not([open]),
+#view-gateway .gateway-manual:not([open]) {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+@media (max-width: 700px) {
+  #view-gateway .gateway-header-auth {
+    flex-basis: 100%;
+  }
+}
+
+/* Align agent request and results */
+#view-gateway #gateway-agent .split.gw {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 24px;
+}
+
+#view-gateway #agentform,
+#view-gateway #agent-out {
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+#view-gateway #agent-out {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+#view-gateway #agent-out > .step-h,
+#view-gateway #agent-out > .p-title {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 760px) {
+  #view-gateway #gateway-agent .split.gw {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+/* Gateway authentication: compact enterprise styling */
+
+#view-gateway .gateway-header-auth {
+  flex: 0 1 390px;
+  min-width: 0;
+  align-self: center;
+}
+
+#view-gateway .gateway-auth-form {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#view-gateway .gateway-auth-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+#view-gateway .gateway-auth-heading label {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: #e4e6ea;
+}
+
+#view-gateway .gateway-auth-lock {
+  font-size: 11px;
+  color: #9297a1;
+}
+
+#view-gateway .gateway-auth-form .reviewer-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
+#view-gateway #requester-secret {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100%;
+  height: 42px;
+  padding: 0 13px;
+  box-sizing: border-box;
+  border: 1px solid #383c43;
+  border-radius: 8px;
+  background: #1d1f23;
+  color: #f0f0f2;
+  font-size: 13px;
+}
+
+#view-gateway #requester-secret:focus-visible {
+  outline: 2px solid #a6aeb9;
+  outline-offset: 2px;
+}
+
+#view-gateway .gateway-auth-form button {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 0 15px;
+  white-space: nowrap;
+  border-radius: 8px;
+}
+
+#view-gateway #requester-status {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #989da6;
+}
+
+@media (max-width: 700px) {
+  #view-gateway .gateway-header-auth {
+    flex-basis: 100%;
+  }
+}
