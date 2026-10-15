@@ -63,7 +63,7 @@ class ConsoleStateTests(unittest.TestCase):
         from types import ModuleType
         from unittest.mock import patch
         stub = ModuleType("nemotron_agent")
-        stub.run_agent = lambda prompt: {
+        stub.run_agent = lambda prompt, tool_runner=None: {
             "status": "BLOCKED", "reason": "Denied",
             "answer": "PRIVATE ANSWER", "tools": [{"result": {"secret": "secret"}}],
             "audit": {"request_id": "test-123", "duration_ms": 1.5,
@@ -231,6 +231,60 @@ class ConsoleStateTests(unittest.TestCase):
             {"status": "COMPLETED"},
         )
         self.assertNotIn("Alex Morgan", json.dumps(response))
+
+    def test_agent_generated_request_enters_approval_queue(self):
+        import sys
+        from types import ModuleType
+        from unittest.mock import patch
+
+        stub = ModuleType("nemotron_agent")
+
+        def fake_run_agent(
+            prompt,
+            tool_runner=None,
+            trusted_customer_id=None,
+        ):
+            self.assertIsNotNone(tool_runner)
+
+            tool_result = tool_runner(
+                "lookup_customer",
+                {"customer_id": "CUST-1001"},
+            )
+
+            return {
+                "status": "ACTION_REQUIRED",
+                "answer": "",
+                "tools": [
+                    {
+                        "tool": "lookup_customer",
+                        "status": tool_result["status"],
+                    }
+                ],
+                "audit": {
+                    "request_id": "agent-test-001",
+                    "duration_ms": 1.0,
+                    "events": [],
+                },
+            }
+
+        stub.run_agent = fake_run_agent
+
+        with patch.dict(sys.modules, {"nemotron_agent": stub}):
+            result = self.console.agent(
+                "Look up a fictional customer."
+            )
+
+        self.assertEqual(result["status"], "ACTION_REQUIRED")
+        self.assertEqual(
+            result["tools"][0]["status"],
+            "APPROVAL_REQUIRED",
+        )
+
+        approvals = self.console.snapshot()["approvals"]
+
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals[0]["tool"], "lookup_customer")
+        self.assertEqual(approvals[0]["status"], "PENDING")
 
 class ConsoleHttpTests(unittest.TestCase):
     @classmethod

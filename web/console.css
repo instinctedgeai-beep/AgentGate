@@ -631,3 +631,70 @@ kbd { border: 1px solid var(--rule-2); border-bottom-width: 2px; border-radius: 
   padding-top: 12px;
   gap: 12px;
 }
+/* Gateway progressive disclosure */
+#view-gateway details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 16px 0;
+  list-style-position: inside;
+}
+
+#view-gateway details > summary:hover {
+  color: var(--text);
+}
+
+#view-gateway .gateway-manual {
+  border-top: 1px solid var(--rule);
+}
+
+#view-gateway .gateway-manual[open] .steps {
+  margin-top: 16px;
+}
+/* Gateway activity chart */
+#gateway-activity-panel {
+  margin-top: 24px;
+}
+
+#gateway-activity {
+  min-height: 220px;
+}
+
+#gateway-activity-empty {
+  margin-top: 12px;
+}
+/* Security trend inside Agent diagnostics */
+#agent-observability .gateway-trend {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 12px 0 24px;
+}
+
+#agent-decision-chart {
+  width: 100%;
+  min-height: 210px;
+}
+
+#agent-decision-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+#agent-decision-chart .trend-label {
+  font: 12px var(--f-body);
+  fill: var(--muted);
+}
+
+#agent-decision-chart .trend-line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* AgentGate security decision chart */
+#agent-decision-chart {
+  --chart-passed: #34d399;
+  --chart-approval: #a78bfa;
+  --chart-blocked: #fb7185;
+}

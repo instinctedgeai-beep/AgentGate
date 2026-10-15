@@ -26,10 +26,13 @@ TOOL_SCHEMAS = [
         "function": {
             "name": "lookup_customer",
             "description": (
-                "Retrieve a fictional customer record using its customer ID. "
-                "Use for customer record lookups, not document searches. "
-                "This action requires human approval and cannot run automatically."
+                "Request a customer record lookup using a trusted local identifier. "
+                "When a customer lookup is requested, set customer_id to exactly "
+                "'TRUSTED_CUSTOMER'. Never invent or supply an actual customer ID. "
+                "The trusted backend resolves this placeholder after validating it. "
+                "Human approval is required before execution."
             ),
+
             "parameters": {
                 "type": "object",
                 "properties": {

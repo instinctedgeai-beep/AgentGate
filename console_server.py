@@ -273,14 +273,18 @@ class Console:
             return response
 
 
-    def agent(self, prompt: str) -> dict:
+    def agent(self, prompt: str, trusted_customer_id=None) -> dict:
         try:
             from nemotron_agent import run_agent
         except ImportError:
             result = {"status": "ERROR", "reason": "Agent dependencies are unavailable"}
         else:
             try:
-                result = run_agent(prompt)
+                result = run_agent(
+                    prompt,
+                    tool_runner=self.call_tool,
+                    trusted_customer_id=trusted_customer_id,
+                )
             except Exception:
                 result = {"status": "ERROR", "reason": "Agent execution failed; check local server logs"}
         audit = result.get("audit") if isinstance(result.get("audit"), dict) else {}
@@ -469,7 +473,31 @@ def make_handler(console: Console):
                     )
 
                 if path == "/api/agent":
-                    return self._json(200, console.agent(_text(body, "prompt")))
+                    prompt = _text(body, "prompt")
+
+                    trusted_customer_id = body.get("trusted_customer_id")
+
+                    if trusted_customer_id is not None:
+                        if (
+                            not isinstance(trusted_customer_id, str)
+                            or not re.fullmatch(
+                                r"CUST-[0-9]{4}",
+                                trusted_customer_id,
+                            )
+                        ):
+                            raise ApiError(
+                                400,
+                                "Invalid trusted customer ID",
+                            )
+
+                    return self._json(
+                        200,
+                        console.agent(
+                            prompt,
+                            trusted_customer_id=trusted_customer_id,
+                        ),
+                    )
+
                 raise ApiError(404, "Not found")
             except ApiError as err:
                 return self._json(err.status, {"error": str(err)})

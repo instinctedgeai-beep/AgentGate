@@ -16,9 +16,7 @@
     draft_email: "Prepare an email draft. Never sends.",
   };
   const AGENT_SAMPLES = {
-    "Public document": "Find the public product overview and summarize what AgentGate does in one sentence.",
-    "Customer lookup": "Use the lookup_customer tool to retrieve the fictional customer record for CUST-1001. Do not search documents.",
-    "Private request": "My email is alex@example.com. Can you summarize my information?",
+    "Customer lookup": "Use the lookup_customer tool with customer_id set to TRUSTED_CUSTOMER. AgentGate already has the customer identifier in trusted local context. Do not ask for the identifier or search documents. Request the lookup and wait for authorization.",
   };
 
   const S = {
@@ -37,6 +35,8 @@
     reviewerToken: null,
     gatewayRequest: null,
     gatewayPolling: null,
+    agentRequests: [],
+    agentPolling: null,
   };
 
   // ── API ──────────────────────────────────────────────────────────────
@@ -229,6 +229,132 @@
     renderGatewayStatus();
 
     S.gatewayPolling = setInterval(checkGatewayStatus, 3000);
+  }
+
+  function stopAgentPolling() {
+    if (S.agentPolling !== null) {
+      clearInterval(S.agentPolling);
+      S.agentPolling = null;
+    }
+  }
+
+  function updateAgentStatusDisplay() {
+    const box = $("#agent-out");
+    if (!box || !S.agentRequests.length) return;
+
+    const statuses = S.agentRequests.map((request) => {
+      if (request.execution_status === "COMPLETED") return "COMPLETED";
+      if (request.status === "REJECTED") return "REJECTED";
+      if (request.status === "CONSUMED") return "FAILED";
+      return request.status;
+    });
+
+    let overall = "ACTION_REQUIRED";
+
+    if (statuses.includes("REJECTED")) {
+      overall = "REJECTED";
+    } else if (statuses.includes("FAILED")) {
+      overall = "FAILED";
+    } else if (statuses.every((status) => status === "COMPLETED")) {
+      overall = "COMPLETED";
+    }
+
+    const statusBadge = box.querySelector(".agent-live-status");
+
+    if (statusBadge) {
+      statusBadge.innerHTML = pill(overall);
+    }
+
+    const list = box.querySelector(".agent-live-approvals");
+
+    if (list) {
+      list.innerHTML = S.agentRequests.map((request) => {
+        const status = request.execution_status === "COMPLETED"
+          ? "COMPLETED"
+          : request.status;
+
+        return `<div class="req">
+          <div class="req-h">
+            <b>${esc(request.tool)}</b>
+            ${pill(status)}
+          </div>
+          <p class="req-meta">
+            ${esc(status === "PENDING"
+              ? "Awaiting reviewer approval."
+              : status === "APPROVED"
+                ? "Approved. Awaiting execution."
+                : status === "REJECTED"
+                  ? "Reviewer denied this action."
+                  : status === "COMPLETED"
+                    ? "Authorized execution completed."
+                    : "Execution did not complete successfully.")}
+          </p>
+        </div>`;
+      }).join("");
+    }
+
+        const message = box.querySelector(".agent-live-message");
+
+        if (message) {
+          message.textContent = overall === "COMPLETED"
+            ? "The authorized action was executed successfully."
+            : overall === "REJECTED"
+              ? "The reviewer rejected this action. It will not execute."
+              : overall === "FAILED"
+                ? "The action could not be completed."
+                : "Waiting for an authorized reviewer to approve and execute this action.";
+        }
+  }
+
+  async function checkAgentRequests() {
+    if (!S.agentRequests.length) return;
+
+    const requests = S.agentRequests;
+
+    for (const request of requests) {
+      if (["REJECTED", "CONSUMED"].includes(request.status)) continue;
+
+      try {
+        const state = await api("/api/request-status", {
+          status_token: request.token,
+        });
+
+        if (S.agentRequests !== requests) return;
+
+        request.status = state.status;
+        request.execution_status = state.execution_status;
+      } catch (error) {
+        console.warn("Agent approval status unavailable:", error);
+      }
+    }
+
+    updateAgentStatusDisplay();
+
+    if (requests.every((request) =>
+      ["REJECTED", "CONSUMED"].includes(request.status)
+    )) {
+      stopAgentPolling();
+    }
+  }
+
+  function watchAgentRequests(result) {
+    stopAgentPolling();
+
+    S.agentRequests = (result.tools || [])
+      .filter((tool) =>
+        tool.status === "APPROVAL_REQUIRED" &&
+        typeof tool.status_token === "string"
+      )
+      .map((tool) => ({
+        tool: tool.tool,
+        token: tool.status_token,
+        status: "PENDING",
+        execution_status: null,
+      }));
+
+    if (!S.agentRequests.length) return;
+
+    S.agentPolling = setInterval(checkAgentRequests, 3000);
   }
 
 async function refresh() {
@@ -651,17 +777,166 @@ async function refresh() {
 
     $("#toollog-empty").hidden = rows.length > 0;
 
-    $("#toollog tbody").innerHTML = rows.map((e) => {
+    const descriptions = {
+      APPROVAL_REQUIRED: [
+        "Approval required",
+        "The action was held for human authorization."
+      ],
+      PENDING: [
+        "Awaiting approval",
+        "The action is waiting for an authorized reviewer."
+      ],
+      APPROVED: [
+        "Approved",
+        "A reviewer authorized the action. Execution is tracked separately."
+      ],
+      REJECTED: [
+        "Rejected",
+        "A reviewer rejected the requested action."
+      ],
+      BLOCKED: [
+        "Blocked",
+        "AgentGate prevented the action under its security policy."
+      ],
+      COMPLETED: [
+        "Completed",
+        "A tool operation completed."
+      ],
+      ERROR: [
+        "Error",
+        "The action could not be completed."
+      ]
+    };
+
+    $("#toollog tbody").innerHTML = rows.map((event) => {
+      const [label, explanation] =
+        descriptions[event.status] || [
+          "Policy event",
+          "AgentGate recorded a security decision."
+        ];
+
       return `<tr>
-        <td class="m">${esc(clock(e.time))}</td>
-        <td class="m">Tool request</td>
-        <td>${pill(e.status)}</td>
-        <td>Policy event recorded</td>
+        <td class="m">${esc(clock(event.time))}</td>
+        <td>${esc(label)}</td>
+        <td>${esc(explanation)}</td>
       </tr>`;
     }).join("");
   }
+    function renderGatewayActivity() {
+    const host = $("#agent-decision-chart");
+    const empty = $("#agent-decision-chart-empty");
+    if (!host || !empty) return;
 
+    const events = (S.publicState?.recent_tool_statuses || []).slice().reverse();
 
+    empty.hidden = events.length > 0;
+    host.innerHTML = "";
+
+    if (!events.length) return;
+
+    let allow = 0;
+    let approval = 0;
+    let blocked = 0;
+
+    const points = events.map((e, i) => {
+      const status = String(e.status || "");
+
+            if (
+        status === "ALLOW" ||
+        status === "ALLOWED" ||
+        status === "PASSED"
+      ) {
+        allow += 1;
+      } else if (
+        status === "APPROVAL_REQUIRED" ||
+        status === "PENDING"
+      ) {
+        approval += 1;
+      } else if (
+        status === "BLOCKED" ||
+        status === "DENIED"
+      ) {
+        blocked += 1;
+      }
+
+      return {
+        x: i,
+        allow,
+        approval,
+        blocked,
+      };
+    });
+
+    const w = Math.max(host.clientWidth || 640, 640);
+    const h = 220;
+    const pad = { t: 16, r: 20, b: 30, l: 36 };
+    const innerW = w - pad.l - pad.r;
+    const innerH = h - pad.t - pad.b;
+    const maxY = Math.max(
+      1,
+      ...points.map((p) => Math.max(p.allow, p.approval, p.blocked))
+    );
+
+    const svg = document.createElementNS(SVGNS, "svg");
+    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+    svg.setAttribute("width", "100%");
+    svg.setAttribute("height", h);
+
+    const x = (i) =>
+      pad.l + (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
+
+    const y = (v) => pad.t + innerH - (v / maxY) * innerH;
+
+    function linePath(key) {
+      return points
+        .map((p, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(p[key])}`)
+        .join(" ");
+    }
+
+    function addLine(pathData, colorVar) {
+      const path = document.createElementNS(SVGNS, "path");
+      path.setAttribute("d", pathData);
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", `var(${colorVar})`);
+      path.setAttribute("stroke-width", "2.5");
+      path.setAttribute("stroke-linecap", "round");
+      path.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(path);
+    }
+
+    function addLabel(text, xPos, yPos, colorVar) {
+      const t = document.createElementNS(SVGNS, "text");
+      t.setAttribute("x", xPos);
+      t.setAttribute("y", yPos);
+      t.setAttribute("fill", `var(${colorVar})`);
+      t.setAttribute("font-size", "12");
+      t.textContent = text;
+      svg.appendChild(t);
+    }
+
+    // Grid lines
+    for (let i = 0; i <= 4; i++) {
+      const gy = pad.t + (i / 4) * innerH;
+      const line = document.createElementNS(SVGNS, "line");
+      line.setAttribute("x1", pad.l);
+      line.setAttribute("x2", w - pad.r);
+      line.setAttribute("y1", gy);
+      line.setAttribute("y2", gy);
+      line.setAttribute("stroke", "rgba(255,255,255,0.08)");
+      line.setAttribute("stroke-width", "1");
+      svg.appendChild(line);
+    }
+
+    addLine(linePath("allow"), "--chart-passed");
+    addLine(linePath("approval"), "--chart-approval");
+    addLine(linePath("blocked"), "--chart-blocked");
+
+    addLabel("Passed", pad.l, 14, "--chart-passed");
+    addLabel("Needs review", pad.l + 80, 14, "--chart-approval");
+    addLabel("Blocked", pad.l + 190, 14, "--chart-blocked");
+
+    host.appendChild(svg);
+  }
   // evidence
   function renderFigures() {
     const st = S.status, s = st?.summary;
@@ -776,6 +1051,7 @@ async function refresh() {
     renderToolLog();
     renderAudit();
     renderAgentMetrics();
+    renderGatewayActivity();
   }
 
   // ── Views ────────────────────────────────────────────────────────────
@@ -990,7 +1266,16 @@ async function refresh() {
 
     // agent
     $("#agent-samples").innerHTML = Object.keys(AGENT_SAMPLES).map((k) => `<button type="button" class="chip" data-a="${esc(k)}"><i style="background:var(--muted)"></i>${esc(k)}</button>`).join("");
-    $("#agent-samples").addEventListener("click", (ev) => { const b = ev.target.closest("[data-a]"); if (b) $("#agent-prompt").value = AGENT_SAMPLES[b.dataset.a]; });
+    $("#agent-samples").addEventListener("click", (ev) => {
+      const button = ev.target.closest("[data-a]");
+      if (!button) return;
+
+      $("#agent-prompt").value = AGENT_SAMPLES[button.dataset.a];
+
+      $("#agent-trusted-fields").hidden =
+        button.dataset.a !== "Customer lookup";
+    });
+
     $("#agentform").addEventListener("submit", guard(async (ev) => {
       ev.preventDefault();
       const prompt = $("#agent-prompt").value;
@@ -999,18 +1284,97 @@ async function refresh() {
       btn.disabled = true;
       out.innerHTML = `<p class="p-title">Run</p><p class="empty">Checking policy and calling Nemotron…</p>`;
       try {
-        const r = await api("/api/agent", { prompt });
-        const tools = (r.tools || []).map((t, i) => `<div class="req" data-status="${t.status === "COMPLETED" ? "APPROVED" : t.status === "BLOCKED" ? "REJECTED" : "PENDING"}" style="animation-delay:${i * .08}s"><div class="req-h"><b>${i + 1}. ${esc(t.tool)}</b>${pill(t.status)}</div><div class="req-args"><span class="k">Policy explanation:</span> ${esc(t.reason || "Not available")}</div>${t.status === "COMPLETED" && t.result ? `<pre>${esc(JSON.stringify(t.result, null, 2))}</pre>` : ""}</div>`).join("");
-        const summary = { COMPLETED: "Agent completed the request.", ACTION_REQUIRED: "An action was blocked or needs review. Nothing from those tools was sent back to the model." }[r.status]
-          || `${r.status === "BLOCKED" ? "Blocked" : "Error"}: ${r.reason || "No reason provided"}`;
-        out.innerHTML = `<div class="p-row"><p class="p-title">Execution status</p>${pill(r.status)}</div>
-          <p class="rc-why" style="margin:0">${esc(summary)}${r.policy_id ? ` <span class="m">Policy ${esc(r.policy_id)}</span>` : ""}</p>
-          ${r.status === "ACTION_REQUIRED" ? `<p class="note">The Gateway offers a separate local approval demonstration. It does not resume this agent run.</p>` : ""}
-          ${r.answer ? `<p class="p-title">Nemotron response</p><div class="agent-answer">${esc(r.answer)}</div>` : ""}
-          ${tools ? `<p class="p-title">Tool execution</p><div class="agent-tools">${tools}</div>` : ""}
-          ${r.audit ? `<p class="p-title">Execution audit · ${esc(r.audit.request_id || "local")}</p>
-          <p class="p-sub2">${esc(String(r.audit.duration_ms ?? "—"))} ms elapsed · timestamps in UTC · metadata only</p>
-          <div class="agent-tools">${(r.audit.events || []).map((e, i) => `<div class="req"><div class="req-h"><b>${i + 1}. ${esc(e.event_type)}</b>${pill(e.status)}</div><div class="req-meta">${esc(e.timestamp || "")} ${e.detail ? " · " + esc(e.detail) : ""}</div></div>`).join("")}</div>` : ""}`;
+        const trustedFields = $("#agent-trusted-fields");
+
+        const body = { prompt };
+
+        if (!trustedFields.hidden) {
+          body.trusted_customer_id =
+            $("#agent-customer-id").value.trim();
+        }
+
+        const r = await api("/api/agent", body);
+
+        watchAgentRequests(r);
+        const awaitingReview = S.agentRequests.length > 0;
+
+        const messages = {
+          COMPLETED: "The agent completed the request.",
+          ACTION_REQUIRED: awaitingReview
+            ? "This action requires an authorized reviewer before it can continue."
+            : "The requested action could not proceed.",
+          BLOCKED: "AgentGate blocked this request under its security policy.",
+          ERROR: "The request could not be completed."
+        };
+
+        const initialStatus = awaitingReview
+          ? "ACTION_REQUIRED"
+          : r.status;
+
+        const explanation =
+          messages[r.status] || r.reason || "Status unavailable.";
+
+        out.innerHTML = `
+          <div class="p-row">
+            <p class="p-title">Request status</p>
+            <span class="agent-live-status">${pill(initialStatus)}</span>
+          </div>
+
+          <p class="note agent-live-message">
+            ${esc(explanation)}
+          </p>
+
+          ${awaitingReview ? `
+            <div class="agent-tools agent-live-approvals"></div>
+          ` : ""}
+
+          ${r.answer && !awaitingReview ? `
+            <div class="agent-answer">${esc(r.answer)}</div>
+          ` : ""}
+
+          <details class="agent-technical-details">
+            <summary>Technical details</summary>
+
+            ${(r.tools || []).length ? `
+              <h3 class="p-title">Tool decisions</h3>
+              <div class="agent-tools">
+                ${(r.tools || []).map((tool) => `
+                  <div class="req">
+                    <div class="req-h">
+                      <b>${esc(tool.tool)}</b>
+                      ${pill(tool.status)}
+                    </div>
+                    <p class="req-meta">
+                      ${esc(tool.reason || "No additional details.")}
+                    </p>
+                  </div>
+                `).join("")}
+              </div>
+            ` : ""}
+
+            ${r.audit ? `
+              <h3 class="p-title">Execution audit</h3>
+              <p class="p-sub2">
+                ${esc(String(r.audit.duration_ms ?? "—"))}
+                ms elapsed · Metadata only
+              </p>
+              <div class="agent-tools">
+                ${(r.audit.events || []).map((event) => `
+                  <div class="req">
+                    <div class="req-h">
+                      <b>${esc(event.event_type)}</b>
+                      ${pill(event.status)}
+                    </div>
+                    <p class="req-meta">
+                      ${esc(event.detail || "")}
+                    </p>
+                  </div>
+                `).join("")}
+              </div>
+            ` : ""}
+          </details>
+        `;
+          updateAgentStatusDisplay();
         await refresh();
       } finally { btn.disabled = false; }
     }));
