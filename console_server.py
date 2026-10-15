@@ -29,6 +29,7 @@ from tool_gateway import run_tool
 from reviewer_auth import ReviewerAuth
 from requester_auth import RequesterAuth
 from requester_session import RequesterSession
+from approval_store import ApprovalStore
 
 try:  # optional, mirrors nemotron_agent.py
     from dotenv import load_dotenv
@@ -65,17 +66,27 @@ def _text(body: dict, key: str, limit: int = 4000) -> str:
 class Console:
     """All dashboard state and actions, independent of HTTP."""
 
-    def __init__(self):
+    def __init__(self, db_path=None):
         self.lock = threading.Lock()
-        self.history = []          # newest first, decision metadata + execution result
-        self.approvals = ApprovalManager()
-        self.tool_log = []         # newest first
-        self.results = {}          # approval_id -> execution outcome
-        self.agent_history = []   # metadata only; never store prompts or tool outputs
+        self.history = []
+        self.store = ApprovalStore(db_path) if db_path is not None else None
+        self.approvals = ApprovalManager(store=self.store)
+        self.tool_log = []
+        self.results = {}
+        self.agent_history = []
+        if self.store is not None:
+            self.agent_history = self.store.load_agent_audit()
         self.reviewer_auth = ReviewerAuth()
         self.requester_auth = RequesterAuth()
         self.requester_sessions = RequesterSession()
-        self.status_tokens = {}  # Random status token -> approval ID
+        self.status_tokens = {}
+
+        if self.store is not None:
+            for record in self.store.load_all():
+                if record["status"] == "CONSUMED":
+                    self.results[record["approval_id"]] = {
+                        "status": record["execution_status"] or "UNKNOWN"
+                    }
 
     # -- read models -------------------------------------------------------
     def status(self) -> dict:
@@ -270,6 +281,15 @@ class Console:
             elif action == "execute":
                 outcome = run_tool(req.tool_name, req.arguments, approval_id=approval_id,
                                    approval_manager=self.approvals)
+                if self.store is not None and req.status == "CONSUMED":
+                    execution_status = outcome["status"]
+                    if execution_status not in ("COMPLETED", "ERROR"):
+                        execution_status = "UNKNOWN"
+
+                    self.store.record_execution(
+                        approval_id,
+                        execution_status,
+                    )
                 ok = outcome["status"] == "COMPLETED"
                 self.results[approval_id] = outcome
                 self.tool_log.insert(0, {"time": _now(), "tool": req.tool_name, "arguments": req.arguments,
@@ -347,6 +367,9 @@ class Console:
                   "duration_ms": duration,
                   "timestamp": _now(), "events": safe_events}
         with self.lock:
+            if self.store is not None:
+                self.store.save_agent_audit(record)
+
             self.agent_history.insert(0, record)
             del self.agent_history[200:]
         return result
@@ -658,7 +681,12 @@ def main():
     args = parser.parse_args()
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         parser.error("This unauthenticated prototype must bind to localhost only")
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(Console()))
+    database_path = ROOT / "agentgate.db"
+    console = Console(db_path=database_path)
+    server = ThreadingHTTPServer(
+        (args.host, args.port),
+        make_handler(console),
+    )
     print(f"AgentGate Console running at http://{args.host}:{args.port}  (Ctrl+C to stop)")
     try:
         server.serve_forever()

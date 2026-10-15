@@ -3,3 +3,9 @@ __pycache__/
 .venv/
 *.pyc
 .DS_Store
+# Local AgentGate databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
