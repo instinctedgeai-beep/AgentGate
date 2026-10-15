@@ -228,6 +228,31 @@
       </header>
 
       <!-- Primary AI agent workflow -->
+
+      <!-- Requester authentication -->
+      <section class="panel" id="gateway-auth">
+        <form id="requester-form" autocomplete="off">
+          <label for="requester-secret">Agent access</label>
+          <div class="reviewer-controls">
+            <input
+              id="requester-secret"
+              type="password"
+              placeholder="Requester API key"
+              autocomplete="off"
+              required
+            />
+            <button class="btn primary sm" type="submit" id="requester-login">
+              Unlock Gateway
+            </button>
+            <button class="btn sm" type="button" id="requester-logout" hidden>
+              Lock Gateway
+            </button>
+          </div>
+          <p class="p-meta" id="requester-status" role="status">
+            Locked — requester authentication required
+          </p>
+        </form>
+      </section>
       <section class="panel" id="gateway-agent">
         <div class="p-row">
           <div>

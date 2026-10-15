@@ -233,6 +233,10 @@ class ConsoleStateTests(unittest.TestCase):
         self.assertNotIn("Alex Morgan", json.dumps(response))
 
     def test_agent_generated_request_enters_approval_queue(self):
+        self.console.requester_auth.requester_id = "test-agent"
+        self.console.requester_auth.allowed_customers = frozenset({
+            "CUST-1001",
+        })
         import sys
         from types import ModuleType
         from unittest.mock import patch
@@ -271,7 +275,9 @@ class ConsoleStateTests(unittest.TestCase):
 
         with patch.dict(sys.modules, {"nemotron_agent": stub}):
             result = self.console.agent(
-                "Look up a fictional customer."
+                "Look up a fictional customer.",
+                trusted_customer_id="CUST-1001",
+                requester_id="test-agent",
             )
 
         self.assertEqual(result["status"], "ACTION_REQUIRED")
@@ -292,6 +298,11 @@ class ConsoleHttpTests(unittest.TestCase):
         cls.console = Console()
         cls.console.reviewer_auth.reviewer_id = "test-reviewer"
         cls.console.reviewer_auth.reviewer_secret = "synthetic-test-secret"
+        cls.console.requester_auth.requester_id = "test-agent"
+        cls.console.requester_auth.api_key = "synthetic-requester-key"
+        cls.console.requester_auth.allowed_customers = frozenset({
+            "CUST-1001",
+        })
 
         cls.server = ThreadingHTTPServer(
             ("127.0.0.1", 0),
@@ -305,13 +316,14 @@ class ConsoleHttpTests(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
 
-
-    def request(self, path, body=None, token=None):
+    def request(self, path, body=None, token=None, requester_key=None):
         data = None if body is None else json.dumps(body).encode()
 
         headers = {"Content-Type": "application/json"}
         if token is not None:
             headers["Authorization"] = f"Bearer {token}"
+        elif requester_key is not None:
+            headers["Authorization"] = f"Bearer {requester_key}"
 
         req = urllib.request.Request(
             self.base + path,
@@ -330,6 +342,39 @@ class ConsoleHttpTests(unittest.TestCase):
         except urllib.error.HTTPError as err:
             return err.code, json.loads(err.read())
 
+
+    def test_requester_authentication_component_is_configured(self):
+        auth = self.console.requester_auth
+
+        self.assertEqual(
+            auth.authenticate("synthetic-requester-key"),
+            "test-agent",
+        )
+        self.assertIsNone(
+            auth.authenticate("incorrect-key"),
+        )
+
+    def test_requester_cannot_access_unassigned_customer(self):
+        auth = self.console.requester_auth
+
+        self.assertFalse(
+            auth.authorize(
+                "test-agent",
+                "lookup_customer",
+                {"customer_id": "CUST-9999"},
+            )
+        )
+
+    def test_reviewer_identity_does_not_grant_requester_access(self):
+        auth = self.console.requester_auth
+
+        self.assertFalse(
+            auth.authorize(
+                "test-reviewer",
+                "lookup_customer",
+                {"customer_id": "CUST-1001"},
+            )
+        )
 
     def test_status_and_route(self):
         status, body = self.request("/api/status")
@@ -359,6 +404,7 @@ class ConsoleHttpTests(unittest.TestCase):
                 "tool": "lookup_customer",
                 "arguments": {"customer_id": "CUST-1001"},
             },
+            requester_key="synthetic-requester-key",
         )
 
         self.assertEqual(status, 200)
@@ -427,6 +473,7 @@ class ConsoleHttpTests(unittest.TestCase):
                 "tool": "lookup_customer",
                 "arguments": {"customer_id": "CUST-1001"},
             },
+            requester_key="synthetic-requester-key",
         )
         self.assertEqual(status, 200)
         self.assertEqual(call["status"], "APPROVAL_REQUIRED")
@@ -515,6 +562,7 @@ class ConsoleHttpTests(unittest.TestCase):
                 "tool": "lookup_customer",
                 "arguments": {"customer_id": "CUST-1001"},
             },
+            requester_key="synthetic-requester-key",
         )
         self.assertEqual(status, 200)
         approval_id = call["approval_id"]
@@ -574,3 +622,142 @@ class ConsoleHttpTests(unittest.TestCase):
         self.assertNotIn("history", data)
         self.assertNotIn("tool_log", data)
         self.assertNotIn("agent_history", data)
+
+    def test_authenticated_agent_tool_endpoint_rejects_missing_key(self):
+        status, _ = self.request(
+            "/api/agents/tools/call",
+            {
+                "tool": "lookup_customer",
+                "arguments": {"customer_id": "CUST-1001"},
+            },
+        )
+        self.assertEqual(status, 401)
+
+    def test_authenticated_agent_tool_endpoint_rejects_bad_key(self):
+        status, _ = self.request(
+            "/api/agents/tools/call",
+            {
+                "tool": "lookup_customer",
+                "arguments": {"customer_id": "CUST-1001"},
+            },
+            requester_key="invalid-key",
+        )
+        self.assertEqual(status, 401)
+
+    def test_authenticated_agent_tool_endpoint_blocks_wrong_customer(self):
+        status, _ = self.request(
+            "/api/agents/tools/call",
+            {
+                "tool": "lookup_customer",
+                "arguments": {"customer_id": "CUST-9999"},
+            },
+            requester_key="synthetic-requester-key",
+        )
+        self.assertEqual(status, 403)
+
+    def test_authenticated_agent_tool_endpoint_allows_scoped_request(self):
+        status, result = self.request(
+            "/api/agents/tools/call",
+            {
+                "tool": "lookup_customer",
+                "arguments": {"customer_id": "CUST-1001"},
+            },
+            requester_key="synthetic-requester-key",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(result["status"], "APPROVAL_REQUIRED")
+
+    def test_requester_login_rejects_invalid_credentials(self):
+        status, _ = self.request(
+            "/api/requester/login",
+            {"api_key": "incorrect-key"},
+        )
+        self.assertEqual(status, 401)
+
+    def test_requester_session_login_and_logout(self):
+        status, login = self.request(
+            "/api/requester/login",
+            {"api_key": "synthetic-requester-key"},
+        )
+        self.assertEqual(status, 200)
+
+        token = login["token"]
+
+        self.assertEqual(
+            self.console.requester_sessions.authenticate(token),
+            "test-agent",
+        )
+
+        status, _ = self.request(
+            "/api/requester/logout",
+            {},
+            token=token,
+        )
+        self.assertEqual(status, 200)
+
+        self.assertIsNone(
+            self.console.requester_sessions.authenticate(token)
+        )
+
+    def test_manual_tool_endpoint_requires_requester(self):
+        before = len(self.console.snapshot()["approvals"])
+
+        status, _ = self.request(
+            "/api/tools/call",
+            {
+                "tool": "lookup_customer",
+                "arguments": {"customer_id": "CUST-1001"},
+            },
+        )
+
+        self.assertEqual(status, 401)
+        self.assertEqual(
+            len(self.console.snapshot()["approvals"]),
+            before,
+        )
+
+    def test_manual_tool_endpoint_blocks_unassigned_customer(self):
+        before = len(self.console.snapshot()["approvals"])
+
+        status, _ = self.request(
+            "/api/tools/call",
+            {
+                "tool": "lookup_customer",
+                "arguments": {"customer_id": "CUST-9999"},
+            },
+            requester_key="synthetic-requester-key",
+        )
+
+        self.assertEqual(status, 403)
+        self.assertEqual(
+            len(self.console.snapshot()["approvals"]),
+            before,
+        )
+
+    def test_agent_endpoint_requires_requester_authentication(self):
+        before = len(self.console.snapshot()["approvals"])
+
+        status, _ = self.request(
+            "/api/agent",
+            {
+                "prompt": "Look up a customer record.",
+                "trusted_customer_id": "CUST-1001",
+            },
+        )
+
+        self.assertEqual(status, 401)
+        self.assertEqual(
+            len(self.console.snapshot()["approvals"]),
+            before,
+        )
+    def test_clear_requires_reviewer_authentication(self):
+        status, _ = self.request("/api/clear", {})
+        self.assertEqual(status, 401)
+
+    def test_requester_cannot_clear_session(self):
+        status, _ = self.request(
+            "/api/clear",
+            {},
+            requester_key="synthetic-requester-key",
+        )
+        self.assertEqual(status, 401)

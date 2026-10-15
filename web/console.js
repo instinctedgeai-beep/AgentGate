@@ -33,6 +33,7 @@
     renderKeys: {},
     animating: 0,
     reviewerToken: null,
+    requesterToken: null,
     gatewayRequest: null,
     gatewayPolling: null,
     agentRequests: [],
@@ -76,6 +77,17 @@
     return data;
   }
 
+  function renderRequester() {
+    const authenticated = Boolean(S.requesterToken);
+
+    $("#requester-secret").hidden = authenticated;
+    $("#requester-login").hidden = authenticated;
+    $("#requester-logout").hidden = !authenticated;
+
+    $("#requester-status").textContent = authenticated
+      ? "Requester authenticated — Gateway unlocked"
+      : "Locked — requester authentication required";
+  }
   function renderReviewer() {
     const authenticated = Boolean(S.reviewerToken);
 
@@ -1144,14 +1156,44 @@ async function refresh() {
       }
     }));
     $("#btn-clear").addEventListener("click", guard(async () => {
-      await api("/api/clear", {});
+      if (!S.reviewerToken) {
+        throw new Error("Unlock Activity as a reviewer before clearing the session.");
+      }
+
+      await api("/api/clear", {}, S.reviewerToken);
       $("#receipt").innerHTML = S.emptyReceipt;
       S.actN = 0;
       S.seen.clear();
       await refresh();
     }));
 
-    // gateway
+    // Requester authentication
+    renderRequester();
+
+    $("#requester-form").addEventListener("submit", guard(async (ev) => {
+      ev.preventDefault();
+
+      const input = $("#requester-secret");
+      const api_key = input.value;
+      input.value = "";
+
+      const result = await api("/api/requester/login", { api_key });
+
+      S.requesterToken = result.token;
+      renderRequester();
+      toast("Gateway unlocked");
+    }));
+
+    $("#requester-logout").addEventListener("click", guard(async () => {
+      const token = S.requesterToken;
+      if (!token) return;
+
+      S.requesterToken = null;
+      renderRequester();
+
+      await api("/api/requester/logout", {}, token);
+      toast("Gateway locked");
+    }));
 
     // Reviewer authentication
     renderReviewer();
@@ -1197,10 +1239,14 @@ async function refresh() {
         args[f] = S.args[S.tool]?.[f] ?? "";
       });
 
+      if (!S.requesterToken) {
+        throw new Error("Unlock Gateway with requester credentials first.");
+      }
+
       const entry = await api("/api/tools/call", {
         tool: S.tool,
         arguments: args,
-      });
+      }, S.requesterToken);
 
       watchGatewayRequest(entry);
 
@@ -1293,7 +1339,11 @@ async function refresh() {
             $("#agent-customer-id").value.trim();
         }
 
-        const r = await api("/api/agent", body);
+        if (!S.requesterToken) {
+          throw new Error("Unlock Gateway with requester credentials first.");
+        }
+
+        const r = await api("/api/agent", body, S.requesterToken);
 
         watchAgentRequests(r);
         const awaitingReview = S.agentRequests.length > 0;

@@ -27,6 +27,8 @@ from dashboard_data import DEMO_PROMPTS, SAMPLE_PROMPTS, TOOL_FIELDS, TOOL_POLIC
 from engine import PATTERNS, execute, inspect
 from tool_gateway import run_tool
 from reviewer_auth import ReviewerAuth
+from requester_auth import RequesterAuth
+from requester_session import RequesterSession
 
 try:  # optional, mirrors nemotron_agent.py
     from dotenv import load_dotenv
@@ -71,6 +73,8 @@ class Console:
         self.results = {}          # approval_id -> execution outcome
         self.agent_history = []   # metadata only; never store prompts or tool outputs
         self.reviewer_auth = ReviewerAuth()
+        self.requester_auth = RequesterAuth()
+        self.requester_sessions = RequesterSession()
         self.status_tokens = {}  # Random status token -> approval ID
 
     # -- read models -------------------------------------------------------
@@ -186,6 +190,23 @@ class Console:
         with self.lock:
             self.history.clear()
 
+    def authorize_tool_request(
+        self,
+        requester_id: str,
+        tool: str,
+        arguments,
+    ) -> None:
+        """Reject unauthorized requests before tool policy evaluation."""
+        if not self.requester_auth.authorize(
+            requester_id,
+            tool,
+            arguments,
+        ):
+            raise ApiError(
+                403,
+                "Requester is not authorized for this action",
+            )
+
     def call_tool(self, tool: str, arguments) -> dict:
         outcome = run_tool(tool, arguments)
         entry = {"time": _now(), "tool": tool, "arguments": arguments if isinstance(arguments, dict) else {},
@@ -272,21 +293,46 @@ class Console:
 
             return response
 
-
-    def agent(self, prompt: str, trusted_customer_id=None) -> dict:
+    def agent(
+        self,
+        prompt: str,
+        trusted_customer_id=None,
+        requester_id=None,
+    ) -> dict:
         try:
             from nemotron_agent import run_agent
         except ImportError:
-            result = {"status": "ERROR", "reason": "Agent dependencies are unavailable"}
+            result = {
+                "status": "ERROR",
+                "reason": "Agent dependencies are unavailable",
+            }
         else:
+            def authorized_tool_runner(tool, arguments):
+                self.authorize_tool_request(
+                    requester_id,
+                    tool,
+                    arguments,
+                )
+                return self.call_tool(tool, arguments)
+
             try:
                 result = run_agent(
                     prompt,
-                    tool_runner=self.call_tool,
+                    tool_runner=authorized_tool_runner,
                     trusted_customer_id=trusted_customer_id,
                 )
+            except ApiError:
+                result = {
+                    "status": "BLOCKED",
+                    "reason": "Requester is not authorized for this action",
+                    "tools": [],
+                }
             except Exception:
-                result = {"status": "ERROR", "reason": "Agent execution failed; check local server logs"}
+                result = {
+                    "status": "ERROR",
+                    "reason": "Agent execution failed; check local server logs",
+                    "tools": [],
+                }
         audit = result.get("audit") if isinstance(result.get("audit"), dict) else {}
         events = audit.get("events", [])
         # Strictly allowlist metadata fields; never persist prompts, tool results or arguments.
@@ -344,6 +390,37 @@ def make_handler(console: Console):
             if not isinstance(body, dict):
                 raise ApiError(400, "Body must be a JSON object")
             return body
+        def _require_reviewer(self):
+            """Require a valid reviewer session."""
+            authorization = self.headers.get("Authorization", "")
+            scheme, _, token = authorization.partition(" ")
+
+            if scheme != "Bearer" or not token:
+                raise ApiError(401, "Reviewer authentication required")
+
+            reviewer_id = console.reviewer_auth.authenticate(token)
+
+            if reviewer_id is None:
+                raise ApiError(401, "Reviewer session invalid or expired")
+
+            return reviewer_id
+        def _require_requester(self):
+            """Authenticate a requester session or agent credential."""
+            authorization = self.headers.get("Authorization", "")
+            scheme, _, token = authorization.partition(" ")
+
+            if scheme != "Bearer" or not token:
+                raise ApiError(401, "Requester authentication required")
+
+            requester_id = console.requester_sessions.authenticate(token)
+
+            if requester_id is None:
+                requester_id = console.requester_auth.authenticate(token)
+
+            if requester_id is None:
+                raise ApiError(401, "Invalid or expired requester credentials")
+
+            return requester_id
 
         def _dispatch(self, method: str):
             if method == "POST":
@@ -401,6 +478,39 @@ def make_handler(console: Console):
                     raise ApiError(404, "Not found")
 
                 body = self._body()
+
+                if path == "/api/requester/login":
+                    requester_id = console.requester_auth.authenticate(
+                        body.get("api_key")
+                    )
+
+                    if requester_id is None:
+                        raise ApiError(401, "Invalid requester credentials")
+
+                    session_token = console.requester_sessions.create(
+                        requester_id
+                    )
+
+                    return self._json(200, {
+                        "token": session_token,
+                        "expires_in": console.requester_sessions.ttl_seconds,
+                    })
+
+                if path == "/api/requester/logout":
+                    authorization = self.headers.get(
+                        "Authorization", ""
+                    )
+                    scheme, _, token = authorization.partition(" ")
+
+                    if (
+                        scheme != "Bearer"
+                        or not token
+                        or console.requester_sessions.authenticate(token) is None
+                    ):
+                        raise ApiError(401, "Requester session required")
+
+                    console.requester_sessions.revoke(token)
+                    return self._json(200, {"ok": True})
                 if path == "/api/reviewer/login":
                     token = console.reviewer_auth.login(body.get("secret"))
                     if token is None:
@@ -428,16 +538,40 @@ def make_handler(console: Console):
                 if path == "/api/demo":
                     return self._json(200, console.demo())
                 if path == "/api/clear":
+                    self._require_reviewer()
                     console.clear()
                     return self._json(200, {"ok": True})
-                if path == "/api/tools/call":
+                if path == "/api/agents/tools/call":
+                    requester_id = self._require_requester()
+                    tool = _text(body, "tool", 64)
+                    arguments = body.get("arguments")
+
+                    console.authorize_tool_request(
+                        requester_id,
+                        tool,
+                        arguments,
+                    )
+
                     return self._json(
                         200,
-                        console.call_tool(
-                            _text(body, "tool", 64),
-                            body.get("arguments"),
-                        ),
+                        console.call_tool(tool, arguments),
                     )
+                if path == "/api/tools/call":
+                    requester_id = self._require_requester()
+                    tool = _text(body, "tool", 64)
+                    arguments = body.get("arguments")
+
+                    console.authorize_tool_request(
+                        requester_id,
+                        tool,
+                        arguments,
+                    )
+
+                    return self._json(
+                        200,
+                        console.call_tool(tool, arguments),
+                    )
+
                 if path == "/api/request-status":
                     token = _text(body, "status_token", 256)
                     return self._json(
@@ -473,6 +607,7 @@ def make_handler(console: Console):
                     )
 
                 if path == "/api/agent":
+                    requester_id = self._require_requester()
                     prompt = _text(body, "prompt")
 
                     trusted_customer_id = body.get("trusted_customer_id")
@@ -495,6 +630,7 @@ def make_handler(console: Console):
                         console.agent(
                             prompt,
                             trusted_customer_id=trusted_customer_id,
+                            requester_id=requester_id,
                         ),
                     )
 
