@@ -8,7 +8,10 @@ the same code the tests cover.
     python console_server.py            # http://127.0.0.1:8600
     python console_server.py --port 9000
 
-State is in memory and per server process. Raw prompts are never stored.
+Operational routing state is held in memory. Approval decisions,
+reviewer attribution, deletion history, and sanitized agent audit
+records are persisted in SQLite when storage is configured.
+Raw prompts are not stored in the operational audit.
 """
 
 import argparse
