@@ -106,32 +106,132 @@ class Console:
             "policy": [{"tool": t, "condition": c, "outcome": o} for t, c, o in TOOL_POLICY_MATRIX],
         }
 
-
     def public_snapshot(self) -> dict:
-        """Return limited operational counts, never approval details."""
+        """Return limited operational metadata without protected details."""
         with self.lock:
             pending = sum(
                 req.status == "PENDING"
                 for req in self.approvals.requests.values()
             )
+
+            events = [
+                {
+                    "status": item["status"],
+                    "time": item["time"],
+                }
+                for item in self.tool_log
+                if self.store is None
+                or not item.get("approval_id")
+            ]
+
+            if self.store is not None:
+                visible_ids = self.store.visible_approval_ids()
+                for record in self.store.load_all():
+                    if record["approval_id"] not in visible_ids:
+                        continue
+                    if record["status"] == "CONSUMED":
+                        status = record["execution_status"] or "UNKNOWN"
+                    elif record["status"] == "APPROVED":
+                        status = "APPROVED"
+                    elif record["status"] == "REJECTED":
+                        status = "REJECTED"
+                    else:
+                        status = "APPROVAL_REQUIRED"
+
+                    events.append({
+                        "status": status,
+                        "time": record["reviewed_at"]
+                            or record["created_at"],
+                    })
+
+            events.sort(
+                key=lambda item: item["time"] or "",
+                reverse=True,
+            )
+
             return {
                 "pending_approvals": pending,
                 "total_requests": len(self.history),
-                "recent_tool_statuses": [
-                    {
-                        "status": item["status"],
-                        "time": item["time"],
-                    }
-                    for item in self.tool_log[:10]
-                ],
+                "recent_tool_statuses": events[:10],
             }
+    def _agent_display_status(self, record):
+        approval_ids = record.get("approval_ids", [])
 
+        if not approval_ids:
+            return record["status"]
+
+        approvals = [
+            self.approvals.requests.get(approval_id)
+            for approval_id in approval_ids
+        ]
+
+        if any(req is None for req in approvals):
+            return record["status"]
+
+        if any(req.status in ("PENDING", "APPROVED") for req in approvals):
+            return "ACTION_REQUIRED"
+
+        if any(req.status == "REJECTED" for req in approvals):
+            return "REJECTED"
+
+        if all(req.status == "CONSUMED" for req in approvals):
+            stored_statuses = {}
+
+            if self.store is not None:
+                stored_statuses = {
+                    row["approval_id"]: row["execution_status"]
+                    for row in self.store.load_all()
+                }
+
+            for req in approvals:
+                result = self.results.get(req.approval_id)
+                execution_status = (
+                    result.get("status")
+                    if isinstance(result, dict)
+                    else None
+                ) or stored_statuses.get(req.approval_id)
+
+                if execution_status == "ERROR":
+                    return "ERROR"
+
+                if execution_status != "COMPLETED":
+                    return "UNKNOWN"
+
+            return "COMPLETED"
+
+        return record["status"]
+    def _agent_reviewer(self, record):
+        """Return reviewer attribution without exposing credentials."""
+        approval_ids = record.get("approval_ids", [])
+
+        for approval_id in approval_ids:
+            req = self.approvals.requests.get(approval_id)
+
+            if req is not None and req.reviewed_by:
+                return {
+                    "reviewer_id": req.reviewed_by,
+                }
+
+        return None
     def snapshot(self) -> dict:
         with self.lock:
             return {
                 "history": list(self.history),
-                "approvals": [self._approval(r) for r in sorted(
-                    self.approvals.requests.values(), key=lambda r: r.created_at, reverse=True)],
+                "deleted_records": (
+                    self.store.deleted_records()
+                    if self.store is not None
+                    else []
+                ),
+                "approvals": [
+                    self._approval(r)
+                    for r in sorted(
+                        self.approvals.requests.values(),
+                        key=lambda r: r.created_at,
+                        reverse=True,
+                    )
+                    if self.store is None
+                    or r.approval_id in self.store.visible_approval_ids()
+                ],
                 "tool_log": [
                     {
                         "time": item["time"],
@@ -141,7 +241,22 @@ class Console:
                     }
                     for item in self.tool_log
                 ],
-                "agent_history": list(self.agent_history),
+                "agent_history": [
+                    {
+                        **record,
+                        "display_status": self._agent_display_status(record),
+                        "reviewer": self._agent_reviewer(record),
+                    }
+                    for record in self.agent_history
+                    if (
+                        not record.get("approval_ids")
+                        or self.store is None
+                        or any(
+                            approval_id in self.store.visible_approval_ids()
+                            for approval_id in record["approval_ids"]
+                        )
+                    )
+                ],
             }
 
     def _approval(self, req) -> dict:
@@ -312,7 +427,33 @@ class Console:
                 }
 
             return response
+    def hide_approval(
+        self,
+        approval_id: str,
+        reviewer_id: str,
+        reason: str,
+    ) -> dict:
+        """Hide a resolved request while preserving its security audit."""
+        if not isinstance(reason, str) or not 3 <= len(reason.strip()) <= 100:
+            raise ApiError(400, "A removal reason of 3-100 characters is required")
 
+        with self.lock:
+            if self.store is None:
+                raise ApiError(409, "Persistent storage required")
+
+            if not self.store.hide_approval(
+                approval_id,
+                reviewer_id,
+                self.reviewer_auth.employee_id,
+                reason.strip(),
+                _now(),
+            ):
+                raise ApiError(
+                    409,
+                    "Only visible, resolved approvals can be removed",
+                )
+
+            return {"ok": True}
     def agent(
         self,
         prompt: str,
@@ -327,13 +468,19 @@ class Console:
                 "reason": "Agent dependencies are unavailable",
             }
         else:
+            agent_approval_ids = []
             def authorized_tool_runner(tool, arguments):
                 self.authorize_tool_request(
                     requester_id,
                     tool,
                     arguments,
                 )
-                return self.call_tool(tool, arguments)
+                outcome = self.call_tool(tool, arguments)
+
+                if outcome.get("approval_id"):
+                    agent_approval_ids.append(outcome["approval_id"])
+
+                return outcome
 
             try:
                 result = run_agent(
@@ -362,10 +509,19 @@ class Console:
                        for e in events if isinstance(e, dict)]
         duration = audit.get("duration_ms")
         duration = duration if isinstance(duration, (int, float)) and not isinstance(duration, bool) else None
-        record = {"request_id": str(audit.get("request_id", ""))[:64] or None,
-                  "status": result.get("status", "ERROR"),
-                  "duration_ms": duration,
-                  "timestamp": _now(), "events": safe_events}
+        approval_ids = (
+            agent_approval_ids
+            if "agent_approval_ids" in locals()
+            else []
+        )
+        record = {
+            "request_id": str(audit.get("request_id", ""))[:64] or None,
+            "status": result.get("status", "ERROR"),
+            "duration_ms": duration,
+            "timestamp": _now(),
+            "events": safe_events,
+            "approval_ids": approval_ids,
+        }
         with self.lock:
             if self.store is not None:
                 self.store.save_agent_audit(record)
@@ -564,6 +720,38 @@ def make_handler(console: Console):
                     self._require_reviewer()
                     console.clear()
                     return self._json(200, {"ok": True})
+                m = re.fullmatch(
+                    r"/api/approvals/([0-9a-f]{16})/hide",
+                    path,
+                )
+
+                if m:
+                    self._require_reviewer()
+
+                    authorization = self.headers.get(
+                        "Authorization", ""
+                    )
+                    token = authorization.partition(" ")[2]
+
+                    reviewer_id = console.reviewer_auth.verify_deletion_code(
+                        token,
+                        body.get("deletion_code"),
+                    )
+
+                    if reviewer_id is None:
+                        raise ApiError(
+                            401,
+                            "Invalid deletion code or verification temporarily locked",
+                        )
+
+                    return self._json(
+                        200,
+                        console.hide_approval(
+                            m.group(1),
+                            reviewer_id,
+                            body.get("reason"),
+                        ),
+                    )
                 if path == "/api/agents/tools/call":
                     requester_id = self._require_requester()
                     tool = _text(body, "tool", 64)

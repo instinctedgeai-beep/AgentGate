@@ -58,6 +58,46 @@ class ApprovalStore:
                         events_json TEXT NOT NULL
                     )
                 """)
+
+                columns = {
+                    row["name"]
+                    for row in connection.execute(
+                        "PRAGMA table_info(agent_audit)"
+                    )
+                }
+
+                if "approval_ids_json" not in columns:
+                    connection.execute(
+                        "ALTER TABLE agent_audit "
+                        "ADD COLUMN approval_ids_json TEXT NOT NULL DEFAULT '[]'"
+                    )
+                approval_columns = {
+                    row["name"]
+                    for row in connection.execute(
+                        "PRAGMA table_info(approvals)"
+                    )
+                }
+
+                if "hidden_from_dashboard" not in approval_columns:
+                    connection.execute(
+                        "ALTER TABLE approvals "
+                        "ADD COLUMN hidden_from_dashboard INTEGER "
+                        "NOT NULL DEFAULT 0"
+                    )
+                deletion_columns = {
+                    "deleted_at": "TEXT",
+                    "deleted_by": "TEXT",
+                    "delete_reason": "TEXT",
+                    "deleted_employee_id": "TEXT",
+                }
+
+                for name, column_type in deletion_columns.items():
+                    if name not in approval_columns:
+                        connection.execute(
+                            f"ALTER TABLE approvals "
+                            f"ADD COLUMN {name} {column_type}"
+                        )
+
         finally:
             os.umask(previous_umask)
 
@@ -203,6 +243,11 @@ class ApprovalStore:
             "status": record.get("status", "ERROR"),
             "duration_ms": record.get("duration_ms"),
             "timestamp": record.get("timestamp"),
+            "approval_ids": [
+                value
+                for value in record.get("approval_ids", [])
+                if isinstance(value, str) and len(value) <= 128
+            ],
             "events": [
                 {
                     "event_type": event.get("event_type"),
@@ -219,9 +264,9 @@ class ApprovalStore:
                 """
                 INSERT INTO agent_audit (
                     request_id, status, duration_ms,
-                    timestamp, events_json
+                    timestamp, events_json, approval_ids_json
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     safe["request_id"],
@@ -229,6 +274,7 @@ class ApprovalStore:
                     safe["duration_ms"],
                     safe["timestamp"],
                     json.dumps(safe["events"]),
+                    json.dumps(safe["approval_ids"]),
                 ),
             )
 
@@ -238,7 +284,7 @@ class ApprovalStore:
             rows = connection.execute(
                 """
                 SELECT request_id, status, duration_ms,
-                       timestamp, events_json
+                        timestamp, events_json, approval_ids_json
                 FROM agent_audit
                 ORDER BY id DESC
                 LIMIT ?
@@ -253,6 +299,82 @@ class ApprovalStore:
                 "duration_ms": row["duration_ms"],
                 "timestamp": row["timestamp"],
                 "events": json.loads(row["events_json"]),
+                "approval_ids": json.loads(row["approval_ids_json"]),
+                "approval_ids": json.loads(row["approval_ids_json"]),
+            }
+            for row in rows
+        ]
+    def hide_approval(
+        self, approval_id, reviewer_id, employee_id, reason, deleted_at
+    ):
+        """Hide a resolved approval and preserve removal accountability."""
+        if not isinstance(reviewer_id, str) or not reviewer_id.strip():
+            raise ValueError("Reviewer identity required")
+
+        if not isinstance(employee_id, str) or not employee_id.strip():
+            raise ValueError("Employee ID required")
+
+        if not isinstance(reason, str) or not 3 <= len(reason.strip()) <= 500:
+            raise ValueError("Removal reason must be 3-500 characters")
+
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE approvals
+                SET hidden_from_dashboard = 1,
+                    deleted_at = ?,
+                    deleted_by = ?,
+                    deleted_employee_id = ?,
+                    delete_reason = ?
+                WHERE approval_id = ?
+                  AND status IN ('REJECTED', 'CONSUMED')
+                  AND hidden_from_dashboard = 0
+                """,
+                (
+                    deleted_at,
+                    reviewer_id,
+                    employee_id,
+                    reason.strip(),
+                    approval_id,
+                ),
+            )
+            return cursor.rowcount == 1
+    def visible_approval_ids(self):
+        """Return the IDs of approvals visible in the dashboard."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT approval_id
+                FROM approvals
+                WHERE hidden_from_dashboard = 0
+                """
+            ).fetchall()
+
+        return {row["approval_id"] for row in rows}
+    def deleted_records(self):
+        """Return removal history without exposing original arguments."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT approval_id, tool_name, status,
+                       deleted_at, deleted_by,
+                       deleted_employee_id, delete_reason
+                FROM approvals
+                WHERE hidden_from_dashboard = 1
+                  AND deleted_at IS NOT NULL
+                ORDER BY deleted_at DESC
+                """
+            ).fetchall()
+
+        return [
+            {
+                "request_id": row["approval_id"],
+                "tool": row["tool_name"],
+                "status": row["status"],
+                "deleted_at": row["deleted_at"],
+                "deleted_by": row["deleted_by"],
+                "employee_id": row["deleted_employee_id"],
+                "reason": row["delete_reason"],
             }
             for row in rows
         ]

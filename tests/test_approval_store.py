@@ -587,5 +587,148 @@ class ApprovalStoreTests(unittest.TestCase):
             restarted.agent_history[0]["status"],
             "BLOCKED",
         )
+    def test_agent_display_status_tracks_reviewer_outcome(self):
+        from console_server import Console
+
+        console = Console(db_path=self.db_path)
+
+        approved = console.approvals.create_request(
+            "lookup_customer",
+            {"customer_id": "CUST-1001"},
+        )
+        rejected = console.approvals.create_request(
+            "lookup_customer",
+            {"customer_id": "CUST-1002"},
+        )
+
+        approved_record = {
+            "status": "ACTION_REQUIRED",
+            "approval_ids": [approved.approval_id],
+        }
+        rejected_record = {
+            "status": "ACTION_REQUIRED",
+            "approval_ids": [rejected.approval_id],
+        }
+
+        self.assertEqual(
+            console._agent_display_status(rejected_record),
+            "ACTION_REQUIRED",
+        )
+
+        self.assertTrue(
+            console.approvals.reject(rejected.approval_id)
+        )
+        self.assertEqual(
+            console._agent_display_status(rejected_record),
+            "REJECTED",
+        )
+
+        self.assertTrue(
+            console.approvals.approve(approved.approval_id)
+        )
+        self.assertTrue(
+            console.approvals.consume(
+                approved.approval_id,
+                "lookup_customer",
+                {"customer_id": "CUST-1001"},
+            )
+        )
+
+        console.store.record_execution(
+            approved.approval_id,
+            "COMPLETED",
+        )
+
+        self.assertEqual(
+            console._agent_display_status(approved_record),
+            "COMPLETED",
+        )
+    def test_hidden_approval_preserves_deletion_details(self):
+        from approval_store import ApprovalStore
+
+        store = ApprovalStore(self.db_path)
+
+        request = store.load_all()
+        if not request:
+            self.store.save(self.request)
+            approval_id = self.request.approval_id
+        else:
+            approval_id = request[0]["approval_id"]
+
+        # Only resolved requests can be hidden.
+        store.decide(
+            approval_id,
+            "REJECTED",
+            "reviewer-1",
+            "2026-10-15T12:00:00Z",
+        )
+
+        deleted_at = "2026-10-15T12:05:00Z"
+
+        self.assertTrue(
+            store.hide_approval(
+                approval_id,
+                "reviewer-1",
+                "EMP-1001",
+                "Duplicate test request",
+                deleted_at,
+            )
+        )
+
+        self.assertNotIn(
+            approval_id,
+            store.visible_approval_ids(),
+        )
+
+        with store._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT status, hidden_from_dashboard,
+                       deleted_by, deleted_employee_id,
+                       delete_reason, deleted_at
+                FROM approvals
+                WHERE approval_id = ?
+                """,
+                (approval_id,),
+            ).fetchone()
+
+        self.assertEqual(row["status"], "REJECTED")
+        self.assertEqual(row["hidden_from_dashboard"], 1)
+        self.assertEqual(row["deleted_by"], "reviewer-1")
+        self.assertEqual(row["deleted_employee_id"], "EMP-1001")
+        self.assertEqual(row["delete_reason"], "Duplicate test request")
+        self.assertEqual(row["deleted_at"], deleted_at)
+    def test_deleted_history_contains_removal_accountability(self):
+        self.store.save(self.request)
+
+        self.assertTrue(
+            self.store.decide(
+                self.request.approval_id,
+                "REJECTED",
+                "reviewer-1",
+                "2026-10-15T12:00:00Z",
+            )
+        )
+
+        self.assertTrue(
+            self.store.hide_approval(
+                self.request.approval_id,
+                "reviewer-1",
+                "EMP-1001",
+                "Duplicate test request",
+                "2026-10-15T12:05:00Z",
+            )
+        )
+
+        records = self.store.deleted_records()
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["request_id"], self.request.approval_id)
+        self.assertEqual(records[0]["status"], "REJECTED")
+        self.assertEqual(records[0]["deleted_by"], "reviewer-1")
+        self.assertEqual(records[0]["employee_id"], "EMP-1001")
+        self.assertEqual(records[0]["reason"], "Duplicate test request")
+
+        self.assertNotIn("arguments", records[0])
 if __name__ == "__main__":
     unittest.main()

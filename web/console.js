@@ -59,7 +59,12 @@
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok) {
-      if (res.status === 401 && token) {
+      const isDeletionCodeFailure =
+        res.status === 401 &&
+        /^\/api\/approvals\/[0-9a-f]{16}\/hide$/.test(path) &&
+        data.error === "Invalid deletion code or verification temporarily locked";
+
+      if (res.status === 401 && token && !isDeletionCodeFailure) {
         S.reviewerToken = null;
         renderReviewer();
         S.snap = {
@@ -71,6 +76,10 @@
         S.renderKeys = {};
         renderAll();
       }
+      if (isDeletionCodeFailure) {
+        throw new Error("Incorrect deletion code. Request was not removed.");
+      }
+
       throw new Error(data.error || `Request failed (${res.status})`);
     }
 
@@ -774,6 +783,15 @@ async function refresh() {
           Request <span class="m">${esc(a.approval_id.slice(0, 8))}</span>
         </div>
         ${act}
+        ${["REJECTED", "CONSUMED"].includes(a.status)
+          ? `<div class="req-act">
+               <button class="btn sm"
+                 data-act="hide"
+                 data-id="${esc(a.approval_id)}">
+                 Remove from dashboard
+               </button>
+             </div>`
+          : ""}
         </div>`;
     }).join("");
   }
@@ -834,121 +852,177 @@ async function refresh() {
       </tr>`;
     }).join("");
   }
-    function renderGatewayActivity() {
+  function renderGatewayActivity() {
     const host = $("#agent-decision-chart");
     const empty = $("#agent-decision-chart-empty");
     if (!host || !empty) return;
 
-    const events = (S.publicState?.recent_tool_statuses || []).slice().reverse();
+    const approvals = S.snap?.approvals || [];
+    const deletedRecords = S.snap?.deleted_records || [];
 
-    empty.hidden = events.length > 0;
-    host.innerHTML = "";
+    const events = approvals.map((approval) => {
+      let status = approval.status;
 
-    if (!events.length) return;
-
-    let allow = 0;
-    let approval = 0;
-    let blocked = 0;
-
-    const points = events.map((e, i) => {
-      const status = String(e.status || "");
-
-            if (
-        status === "ALLOW" ||
-        status === "ALLOWED" ||
-        status === "PASSED"
-      ) {
-        allow += 1;
-      } else if (
-        status === "APPROVAL_REQUIRED" ||
-        status === "PENDING"
-      ) {
-        approval += 1;
-      } else if (
-        status === "BLOCKED" ||
-        status === "DENIED"
-      ) {
-        blocked += 1;
+      if (status === "CONSUMED") {
+        status = approval.execution_status || "UNKNOWN";
       }
 
-      return {
-        x: i,
-        allow,
-        approval,
-        blocked,
-      };
+      return { status };
     });
 
-    const w = Math.max(host.clientWidth || 640, 640);
-    const h = 220;
-    const pad = { t: 16, r: 20, b: 30, l: 36 };
-    const innerW = w - pad.l - pad.r;
-    const innerH = h - pad.t - pad.b;
-    const maxY = Math.max(
-      1,
-      ...points.map((p) => Math.max(p.allow, p.approval, p.blocked))
-    );
+    const counts = {
+      completed: 0,
+      review: 0,
+      blocked: 0,
+      other: 0
+    };
 
-    const svg = document.createElementNS(SVGNS, "svg");
-    svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-    svg.setAttribute("width", "100%");
-    svg.setAttribute("height", h);
+    events.forEach((event) => {
+      const status = String(event.status || "").toUpperCase();
 
-    const x = (i) =>
-      pad.l + (points.length === 1 ? innerW / 2 : (i / (points.length - 1)) * innerW);
+      if (["COMPLETED", "ALLOW", "ALLOWED", "PASSED"].includes(status)) {
+        counts.completed++;
+      } else if (
+        ["APPROVAL_REQUIRED", "PENDING", "APPROVED"].includes(status)
+      ) {
+        counts.review++;
+      } else if (
+        ["BLOCKED", "DENIED", "REJECTED", "ERROR"].includes(status)
+      ) {
+        counts.blocked++;
+      } else {
+        counts.other++;
+      }
+    });
 
-    const y = (v) => pad.t + innerH - (v / maxY) * innerH;
+    const total = events.length;
+    const hasDeleted = deletedRecords.length > 0;
 
-    function linePath(key) {
-      return points
-        .map((p, i) => `${i === 0 ? "M" : "L"} ${x(i)} ${y(p[key])}`)
-        .join(" ");
-    }
+    empty.hidden = total > 0 || hasDeleted;
+    host.innerHTML = "";
 
-    function addLine(pathData, colorVar) {
-      const path = document.createElementNS(SVGNS, "path");
-      path.setAttribute("d", pathData);
-      path.setAttribute("fill", "none");
-      path.setAttribute("stroke", `var(${colorVar})`);
-      path.setAttribute("stroke-width", "2.5");
-      path.setAttribute("stroke-linecap", "round");
-      path.setAttribute("stroke-linejoin", "round");
-      svg.appendChild(path);
-    }
+    if (!total && !hasDeleted) return;
 
-    function addLabel(text, xPos, yPos, colorVar) {
-      const t = document.createElementNS(SVGNS, "text");
-      t.setAttribute("x", xPos);
-      t.setAttribute("y", yPos);
-      t.setAttribute("fill", `var(${colorVar})`);
-      t.setAttribute("font-size", "12");
-      t.textContent = text;
-      svg.appendChild(t);
-    }
+    const segments = [
+      {
+        label: "Completed",
+        count: counts.completed,
+        cls: "completed"
+      },
+      {
+        label: "Needs review",
+        count: counts.review,
+        cls: "review"
+      },
+      {
+        label: "Rejected / blocked",
+        count: counts.blocked,
+        cls: "blocked"
+      },
+      {
+        label: "Deleted",
+        count: deletedRecords.length,
+        cls: "deleted"
+      }
+    ];
 
-    // Grid lines
-    for (let i = 0; i <= 4; i++) {
-      const gy = pad.t + (i / 4) * innerH;
-      const line = document.createElementNS(SVGNS, "line");
-      line.setAttribute("x1", pad.l);
-      line.setAttribute("x2", w - pad.r);
-      line.setAttribute("y1", gy);
-      line.setAttribute("y2", gy);
-      line.setAttribute("stroke", "rgba(255,255,255,0.08)");
-      line.setAttribute("stroke-width", "1");
-      svg.appendChild(line);
-    }
+    const cards = segments.map((segment) => `
+      <${segment.cls === "deleted" ? "button" : "div"}
+        ${segment.cls === "deleted"
+          ? 'type="button" id="view-deleted-records"'
+          : ""}
+        class="security-breakdown-card ${segment.cls}"
+      >
+        <span>${esc(segment.label)}</span>
+        <strong>${segment.count}</strong>
+        <i class="${segment.cls}"></i>
+      </${segment.cls === "deleted" ? "button" : "div"}>
+    `).join("");
 
-    addLine(linePath("allow"), "--chart-passed");
-    addLine(linePath("approval"), "--chart-approval");
-    addLine(linePath("blocked"), "--chart-blocked");
+    const bars = segments
+      .filter((segment) =>
+        segment.cls !== "deleted" && segment.count > 0
+      )
+      .map((segment) => `
+        <div
+          class="security-breakdown-segment ${segment.cls}"
+          style="width:${(segment.count / total) * 100}%"
+          title="${esc(segment.label)}: ${segment.count}"
+        ></div>
+      `).join("");
 
-    addLabel("Passed", pad.l, 14, "--chart-passed");
-    addLabel("Needs review", pad.l + 80, 14, "--chart-approval");
-    addLabel("Blocked", pad.l + 190, 14, "--chart-blocked");
+        host.innerHTML = `
+      <div class="security-breakdown">
+        <div class="security-breakdown-cards">${cards}</div>
 
-    host.appendChild(svg);
+        <div
+          class="security-breakdown-bar"
+          role="img"
+          aria-label="Security outcomes: ${counts.completed} completed,
+          ${counts.review} needing review,
+          ${counts.blocked} rejected or blocked"
+        >
+          ${bars}
+        </div>
+
+        <div class="security-breakdown-summary">
+          <span>${total} active recorded outcomes</span>
+          <span>${total
+            ? Math.round((counts.completed / total) * 100)
+            : 0}% completed</span>
+        </div>
+
+        <div id="deleted-records-panel"
+             class="deleted-records-panel"
+             hidden>
+          <div class="deleted-records-heading">
+            <h4>Deleted requests</h4>
+            <span>Preserved security audit</span>
+          </div>
+
+          <div class="deleted-records-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Deleted at</th>
+                  <th>Request ID</th>
+                  <th>Status</th>
+                  <th>Deleted by</th>
+                  <th>Employee ID</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                ${deletedRecords.map((r) => `
+                  <tr>
+                    <td>${esc(clock(r.deleted_at))}</td>
+                    <td class="m">${esc(r.request_id)}</td>
+                    <td>${pill(r.status)}</td>
+                    <td>${esc(r.deleted_by || "—")}</td>
+                    <td>${esc(r.employee_id || "—")}</td>
+                    <td>${esc(r.reason || "—")}</td>
+                  </tr>
+                `).join("") ||
+                  '<tr><td colspan="6">No deleted requests.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    $("#view-deleted-records")?.addEventListener("click", () => {
+      if (!S.reviewerToken) {
+        toast("Unlock Activity with reviewer credentials first.", true);
+        return;
+      }
+
+      const panel = $("#deleted-records-panel");
+      panel.hidden = !panel.hidden;
+    });
   }
+
   // evidence
   function renderFigures() {
     const st = S.status, s = st?.summary;
@@ -1043,13 +1117,44 @@ async function refresh() {
       if (typeof r.duration_ms === "number") times.push(r.duration_ms);
     });
     const latency = times.length ? (times.reduce((a,b) => a+b, 0)/times.length).toFixed(0) + " ms" : "—";
-    const data = [["Agent runs", h.length], ["Blocked / pending", `${totals.blocked} / ${totals.pending}`],
-      ["Completed tools", totals.tools], ["Avg. latency", latency]];
+        const data = [
+      ["Agent runs", h.length],
+      [
+        "Pending",
+        (S.snap?.approvals || []).filter(
+          (a) => a.status === "PENDING" || a.status === "APPROVED"
+        ).length
+      ],
+      [
+        "Approved executions completed",
+        (S.snap?.approvals || []).filter(
+          (a) =>
+            a.status === "CONSUMED" &&
+            a.execution_status === "COMPLETED"
+        ).length
+      ],
+      ["Avg. latency", latency]
+    ];
     const box = $("#agent-metrics");
-    if (box) box.innerHTML = data.map(([name,value]) => `<div class="fig"><span>${esc(name)}</span><b>${esc(value)}</b><small>Current session</small></div>`).join("");
+    if (box) box.innerHTML = data.map(([name,value]) => `<div class="fig"><span>${esc(name)}</span><b>${esc(value)}</b><small>Recorded history</small></div>`).join("");
     const table = $("#agent-history tbody");
-    if (table) table.innerHTML = h.slice(0, 20).map((r) => `<tr><td class="m">${esc(clock(r.timestamp))}</td><td class="m">${esc(r.request_id || "—")}</td><td>${pill(r.status)}</td><td class="m">${r.events.length}</td><td class="m r">${r.duration_ms == null ? "—" : Number(r.duration_ms).toFixed(1)}</td></tr>`).join("");
-    const empty = $("#agent-history-empty"); if (empty) empty.hidden = !!h.length;
+    if (table) table.innerHTML = h.slice(0, 20).map((r) => `
+      <tr>
+        <td class="m">${esc(clock(r.timestamp))}</td>
+        <td class="m">${esc(r.request_id || "—")}</td>
+        <td>${pill(r.display_status || r.status)}</td>
+        <td class="m">
+          ${r.reviewer
+            ? esc(r.reviewer.reviewer_id)
+            : "—"}
+        </td>
+      <td class="m r">
+        ${r.duration_ms == null
+          ? "—"
+          : Number(r.duration_ms).toFixed(1)}
+      </td>
+    </tr>
+  `).join("");
   }
 
   function renderAll() {
@@ -1078,22 +1183,104 @@ async function refresh() {
   function showView() {
     const name = (location.hash || "#switchboard").slice(1);
     const view = $("#view-" + name) ? name : "switchboard";
+
     const current = $(".view:not([hidden])");
     const same = current && current.id === "view-" + view;
+
     const swap = () => {
-      $$(".view").forEach((v) => { v.hidden = v.id !== "view-" + view; v.classList.remove("swap"); });
+      $$(".view").forEach((element) => {
+        element.hidden = element.id !== "view-" + view;
+        element.classList.remove("swap");
+      });
+
       window.scrollTo(0, 0);
     };
-    $$(".nav a").forEach((a) => { if (a.dataset.view === view) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
-    placeIndicator();
+
+    $$(".nav a").forEach((link) => {
+      if (link.dataset.view === view) {
+        link.setAttribute("aria-current", "page");
+      } else {
+        link.removeAttribute("aria-current");
+      }
+    });
+
     if (!same) {
       swap();
     }
+
+    placeIndicator();
+
     document.title = `${$("#view-" + view).dataset.title} · AgentGate`;
-    if (view === "evidence" && !S.cases.length) loadCases();
+
+    if (view === "evidence" && !S.cases.length) {
+      loadCases();
+    }
   }
   const loadCases = guard(async () => { S.cases = (await api("/api/evaluation")).cases; S.casesLoaded = true; renderCases(); });
+function confirmRemoval() {
+  return new Promise((resolve) => {
+    const dialog = $("#removal-dialog");
+    const form = $("#removal-form");
+    const secretInput = $("#removal-secret");
+    const reasonInput = $("#removal-reason");
+    const cancelButton = $("#removal-cancel");
 
+    form.reset();
+
+    let finished = false;
+
+    function finish(result) {
+      if (finished) return;
+      finished = true;
+
+      form.removeEventListener("submit", submit);
+      cancelButton.removeEventListener("click", cancel);
+      dialog.removeEventListener("cancel", cancel);
+      dialog.removeEventListener("close", closed);
+
+      if (dialog.open) dialog.close();
+
+      secretInput.value = "";
+      reasonInput.value = "";
+
+      resolve(result);
+    }
+
+    function submit(event) {
+      event.preventDefault();
+
+      const secret = secretInput.value;
+      const reason = reasonInput.value.trim();
+
+      if (!/^[0-9]{6}$/.test(secret) || reason.length < 3 || reason.length > 100) {
+        form.reportValidity();
+        return;
+      }
+
+      finish({
+        deletion_code: secret,
+        reason
+      });
+    }
+
+    function cancel(event) {
+      event.preventDefault();
+      finish(null);
+    }
+
+    function closed() {
+      finish(null);
+    }
+
+    form.addEventListener("submit", submit);
+    cancelButton.addEventListener("click", cancel);
+    dialog.addEventListener("cancel", cancel);
+    dialog.addEventListener("close", closed);
+
+    dialog.showModal();
+    secretInput.focus();
+  });
+}
   // ── Wiring ───────────────────────────────────────────────────────────
   function wire() {
     window.addEventListener("hashchange", showView);
@@ -1202,17 +1389,23 @@ async function refresh() {
       ev.preventDefault();
 
       const input = $("#reviewer-secret");
+      const button = $("#reviewer-login");
       const secret = input.value;
 
-      // Clear the passphrase from the form immediately.
       input.value = "";
+      button.disabled = true;
 
-      const result = await api("/api/reviewer/login", { secret });
+      try {
+        const result = await api("/api/reviewer/login", { secret });
 
-      S.reviewerToken = result.token;
-      renderReviewer();
-      await refresh();
-      toast("Governance Center unlocked");
+        S.reviewerToken = result.token;
+        await refresh();
+        renderReviewer();
+
+        toast("Governance Center unlocked");
+      } finally {
+        button.disabled = false;
+      }
     }));
 
     $("#reviewer-logout").addEventListener("click", guard(async () => {
@@ -1253,20 +1446,39 @@ async function refresh() {
       await playChecks(entry);
       await refresh();
     }));
-    $("#queue").addEventListener("click", guard(async (ev) => {
+        $("#queue").addEventListener("click", guard(async (ev) => {
       const b = ev.target.closest("[data-act]");
       if (!b) return;
-      b.disabled = true;
+
       if (!S.reviewerToken) {
         throw new Error("Unlock reviewer approvals before continuing.");
       }
 
-      await api(
-        `/api/approvals/${b.dataset.id}/${b.dataset.act}`,
-        {},
-        S.reviewerToken
-      );
-      await refresh();
+      b.disabled = true;
+
+      try {
+        let removalDetails = {};
+
+        if (b.dataset.act === "hide") {
+          removalDetails = await confirmRemoval();
+
+          if (!removalDetails) {
+            return;
+          }
+        }
+
+        await api(
+          `/api/approvals/${b.dataset.id}/${b.dataset.act}`,
+          removalDetails,
+          S.reviewerToken
+        );
+
+        await refresh();
+      } finally {
+        if (b.isConnected) {
+          b.disabled = false;
+        }
+      }
     }));
 
     // evidence

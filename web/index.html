@@ -145,7 +145,7 @@
         <section class="panel" id="activity-approvals">
           <div class="p-row">
             <div>
-              <h2 class="p-title">Pending human approvals</h2>
+              <h2 class="p-title">Approvals and history</h2>
               <p class="p-sub2">
                 Review restricted tool requests before execution.
               </p>
@@ -334,7 +334,7 @@
         <div class="gateway-trend">
           <div class="p-row">
             <div>
-              <h3 class="p-title">Security decisions over time</h3>
+              <h3 class="p-title">Security decision breakdown</h3>
               <p class="p-sub2">
                 Recent policy events, grouped by decision.
               </p>
@@ -356,7 +356,7 @@
                 <th>Time</th>
                 <th>Request ID</th>
                 <th>Status</th>
-                <th>Events</th>
+                <th>Reviewed by</th>
                 <th class="r">Latency ms</th>
               </tr>
             </thead>
@@ -478,5 +478,50 @@
 
 <div class="toasts" id="toasts" aria-live="assertive"></div>
 <script src="console.js"></script>
+</body>
+</html>
+
+  <!-- Reviewer removal confirmation -->
+  <dialog id="removal-dialog" class="removal-dialog">
+    <form id="removal-form">
+      <h3>Remove request</h3>
+      <p>
+        This request will disappear from operational dashboards.
+        Its original security audit will be preserved.
+      </p>
+
+      <label for="removal-secret">6-digit deletion code</label>
+      <input
+        id="removal-secret"
+        name="deletion_code"
+        type="password"
+        inputmode="numeric"
+        pattern="[0-9]{6}"
+        minlength="6"
+        maxlength="6"
+        autocomplete="off"
+        required
+      >
+      <label for="removal-reason">Reason for removal</label>
+      <textarea
+        id="removal-reason"
+        minlength="3"
+        maxlength="100"
+        rows="3"
+        required
+      ></textarea>
+
+      <div class="removal-actions">
+        <button type="button" id="removal-cancel" class="btn">
+          Cancel
+        </button>
+        <button type="submit" class="btn primary">
+          Confirm removal
+        </button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
 </body>
 </html>
