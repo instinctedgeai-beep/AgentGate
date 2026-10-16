@@ -19,7 +19,12 @@ load_dotenv()
 MODEL = "nvidia/nemotron-3-super-120b-a12b"
 
 
-def run_agent(prompt: str, client=None) -> dict:
+def run_agent(
+    prompt: str,
+    client=None,
+    tool_runner=None,
+    trusted_customer_id=None,
+) -> dict:
     """Perform one policy-governed Nemotron interaction."""
 
     audit = AgentAudit()
@@ -81,8 +86,15 @@ def run_agent(prompt: str, client=None) -> dict:
                 "If a tool returns no matching documents, explain that "
                 "no matching information was found rather than requesting "
                 "another tool call. "
+                "For customer record lookup requests, the trusted backend "
+                "already holds the customer identifier. Never ask the user "
+                "to provide it in chat. Use lookup_customer with customer_id "
+                "set to exactly TRUSTED_CUSTOMER. "
+                "The gateway resolves that placeholder locally and requires "
+                "human approval before executing the lookup. "
                 "Never claim an action ran unless its result confirms "
                 "completion. You cannot approve your own tool calls."
+
 
             ),
         },
@@ -158,9 +170,36 @@ def run_agent(prompt: str, client=None) -> dict:
                 "reason": "Invalid JSON arguments",
             })
             continue
+        # Customer identities must come from trusted server context.
+        if tool_name == "lookup_customer":
+            valid_context = (
+                isinstance(trusted_customer_id, str)
+                and bool(trusted_customer_id.strip())
+            )
 
-        # Execute through AgentGate's policy gateway.
-        tool_result = run_tool(tool_name, arguments)
+            valid_proposal = (
+                arguments == {"customer_id": "TRUSTED_CUSTOMER"}
+            )
+
+            if not valid_context or not valid_proposal:
+                audit.record(
+                    "TOOL_POLICY",
+                    "BLOCKED",
+                    "Customer lookup requires trusted context",
+                )
+                results.append({
+                    "tool": tool_name,
+                    "status": "BLOCKED",
+                    "reason": "Customer lookup requires trusted context",
+                })
+                continue
+
+            # The model never chooses the real customer identifier.
+            arguments = {"customer_id": trusted_customer_id}
+
+        # All tool calls must still pass through the policy gateway.
+        gateway = tool_runner if tool_runner is not None else run_tool
+        tool_result = gateway(tool_name, arguments)
 
         # Record the gateway's returned decision.
         audit.record(

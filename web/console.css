@@ -122,7 +122,17 @@ code, kbd { font-family: var(--f-mono); font-size: .88em; }
 .nav a { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 14px; border-radius: 8px;
   color: var(--muted); text-decoration: none; font-weight: 500; font-size: 13.5px; white-space: nowrap;
   transition: color var(--d-fast-02) var(--e-standard), background-color var(--d-fast-02) var(--e-standard); }
-.nav a:hover { color: var(--paper); background: var(--wash-2); }
+.nav a:hover {
+  color: var(--paper);
+}
+
+.nav a:not([aria-current="page"]):hover {
+  background: transparent;
+}
+
+.nav a:focus:not(:focus-visible) {
+  outline: none;
+}
 .nav a[aria-current="page"] { color: var(--paper); }
 .nav-ind { position: absolute; left: 0; top: 0; width: 0; height: 0; border-radius: 8px; background: var(--ink-2); pointer-events: none; opacity: 0; }
 .nav-ind::before { content: ""; position: absolute; left: 12px; right: 12px; bottom: calc(-1 * var(--ind-gap)); height: 2px; background: var(--private); }
@@ -541,3 +551,618 @@ kbd { border: 1px solid var(--rule-2); border-bottom-width: 2px; border-radius: 
 }
 .req-args .k { color: var(--faint); font-family: var(--f-body); }
 .rc-why .m { font: 400 11.5px var(--f-mono); color: var(--faint); margin-left: 6px; }
+
+/* Gateway reviewer authentication */
+#reviewer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 14px 0 18px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+#reviewer-form label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--paper);
+}
+
+.reviewer-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#reviewer-secret {
+  min-width: 0;
+  flex: 1 1 160px;
+  padding: 10px 12px;
+  background: var(--ink-2);
+  border: 1px solid var(--rule-2);
+  border-radius: 10px;
+  color: var(--paper);
+}
+
+#reviewer-secret:focus {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 4px var(--wash-2);
+}
+
+#reviewer-form [hidden] {
+  display: none;
+}
+
+#reviewer-status {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* Agent: compact desktop layout */
+@media (min-width: 900px) {
+  #view-agent {
+    gap: 16px;
+  }
+
+  #view-agent .head {
+    margin-bottom: 0;
+  }
+
+  #view-agent .split.gw {
+    gap: 24px;
+  }
+
+  #view-agent #agent-observability {
+    margin-top: 0 !important;
+  }
+
+  #view-agent #agent-metrics {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+/* Evidence: bring evaluation results closer to the heading */
+#view-evidence {
+  gap: 12px;
+}
+
+#view-evidence .head {
+  margin-bottom: 0;
+}
+
+#view-evidence .fig {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+#view-evidence .panel {
+  padding-top: 12px;
+  gap: 12px;
+}
+/* Gateway progressive disclosure */
+#view-gateway details > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 16px 0;
+  list-style-position: inside;
+}
+
+#view-gateway details > summary:hover {
+  color: var(--text);
+}
+
+#view-gateway .gateway-manual {
+  border-top: 1px solid var(--rule);
+}
+
+#view-gateway .gateway-manual[open] .steps {
+  margin-top: 16px;
+}
+/* Gateway activity chart */
+#gateway-activity-panel {
+  margin-top: 24px;
+}
+
+#gateway-activity {
+  min-height: 220px;
+}
+
+#gateway-activity-empty {
+  margin-top: 12px;
+}
+/* Security trend inside Agent diagnostics */
+#agent-observability .gateway-trend {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 12px 0 24px;
+}
+
+#agent-decision-chart {
+  width: 100%;
+  min-height: 210px;
+}
+
+#agent-decision-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+#agent-decision-chart .trend-label {
+  font: 12px var(--f-body);
+  fill: var(--muted);
+}
+
+#agent-decision-chart .trend-line {
+  fill: none;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* AgentGate security decision chart */
+#agent-decision-chart {
+  --chart-passed: #34d399;
+  --chart-approval: #a78bfa;
+  --chart-blocked: #fb7185;
+}
+
+/* Compact Gateway layout */
+#view-gateway .gateway-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+#view-gateway .gateway-header-auth {
+  flex: 0 1 350px;
+}
+
+#view-gateway .gateway-header-auth .reviewer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#view-gateway .gateway-header-auth input {
+  min-width: 0;
+  flex: 1;
+}
+
+#view-gateway .gateway-header-auth .p-meta {
+  margin: 5px 0 0;
+}
+
+#view-gateway #agent-prompt {
+  min-height: 76px;
+  height: 76px;
+  resize: vertical;
+}
+
+#view-gateway #agent-observability,
+#view-gateway .gateway-manual {
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+/* Tighten collapsed technical sections */
+#view-gateway #agent-observability:not([open]),
+#view-gateway .gateway-manual:not([open]) {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+@media (max-width: 700px) {
+  #view-gateway .gateway-header-auth {
+    flex-basis: 100%;
+  }
+}
+
+/* Align agent request and results */
+#view-gateway #gateway-agent .split.gw {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 24px;
+}
+
+#view-gateway #agentform,
+#view-gateway #agent-out {
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+#view-gateway #agent-out {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+}
+
+#view-gateway #agent-out > .step-h,
+#view-gateway #agent-out > .p-title {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 760px) {
+  #view-gateway #gateway-agent .split.gw {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+/* Gateway authentication: compact enterprise styling */
+
+#view-gateway .gateway-header-auth {
+  flex: 0 1 390px;
+  min-width: 0;
+  align-self: center;
+}
+
+#view-gateway .gateway-auth-form {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+#view-gateway .gateway-auth-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+#view-gateway .gateway-auth-heading label {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 500;
+  color: #e4e6ea;
+}
+
+#view-gateway .gateway-auth-lock {
+  font-size: 11px;
+  color: #9297a1;
+}
+
+#view-gateway .gateway-auth-form .reviewer-controls {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
+#view-gateway #requester-secret {
+  flex: 1 1 0;
+  min-width: 0;
+  width: 100%;
+  height: 42px;
+  padding: 0 13px;
+  box-sizing: border-box;
+  border: 1px solid #383c43;
+  border-radius: 8px;
+  background: #1d1f23;
+  color: #f0f0f2;
+  font-size: 13px;
+}
+
+#view-gateway #requester-secret:focus-visible {
+  outline: 2px solid #a6aeb9;
+  outline-offset: 2px;
+}
+
+#view-gateway .gateway-auth-form button {
+  flex: 0 0 auto;
+  min-height: 42px;
+  padding: 0 15px;
+  white-space: nowrap;
+  border-radius: 8px;
+}
+
+#view-gateway #requester-status {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #989da6;
+}
+
+@media (max-width: 700px) {
+  #view-gateway .gateway-header-auth {
+    flex-basis: 100%;
+  }
+}
+
+/* Gateway security decision breakdown */
+
+.security-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 14px 0 8px;
+}
+
+.security-breakdown-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.security-breakdown-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  min-width: 0;
+  border: 1px solid var(--line, #303035);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.security-breakdown-card span {
+  color: #e2e8f0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.security-breakdown-card strong {
+  color: #ffffff;
+  font-size: 32px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.security-breakdown-card i {
+  display: block;
+  height: 4px;
+  width: 100%;
+  border-radius: 4px;
+}
+
+.security-breakdown .completed {
+  background: #43c49a;
+}
+
+.security-breakdown .review {
+  background: #ac91ed;
+}
+
+.security-breakdown .blocked {
+  background: #ec8196;
+}
+
+.security-breakdown .deleted {
+  background: #8b9db5;
+}
+
+.security-breakdown-bar {
+  display: flex;
+  width: 100%;
+  height: 16px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.security-breakdown-segment {
+  height: 100%;
+}
+
+.security-breakdown-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted, #999);
+  font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .security-breakdown-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .security-breakdown-summary {
+    flex-direction: column;
+  }
+}
+/* Reviewer reauthentication dialog */
+
+.removal-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-width: 440px;
+  padding: 28px;
+  border: 1px solid var(--line, #303035);
+  border-radius: 14px;
+  background: #17191f;
+  color: #f5f5f5;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+
+.removal-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.removal-dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.removal-dialog h3 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.removal-dialog p {
+  margin: 0 0 8px;
+  color: var(--muted, #999);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.removal-dialog label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.removal-dialog input,
+.removal-dialog textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #3b404b;
+  border-radius: 8px;
+  background: #111318;
+  color: white;
+  font: inherit;
+}
+
+.removal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+/* Deleted request history */
+
+.security-breakdown-card.deleted {
+  cursor: pointer;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+}
+
+.security-breakdown-card.deleted:hover {
+  border-color: #64748b;
+}
+
+.security-breakdown .deleted {
+  background: #64748b;
+}
+
+.deleted-records-panel {
+  padding: 18px;
+  border: 1px solid var(--line, #303035);
+  border-radius: 12px;
+}
+
+.deleted-records-panel[hidden] {
+  display: none;
+}
+
+.deleted-records-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.deleted-records-heading h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.deleted-records-heading span {
+  color: var(--muted, #999);
+  font-size: 12px;
+}
+
+.deleted-records-scroll {
+  overflow-x: auto;
+}
+
+.deleted-records-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.deleted-records-scroll th,
+.deleted-records-scroll td {
+  padding: 12px 16px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  font-size: 12px;
+}
+/* Gateway agent history readability */
+
+#agent-history {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+#agent-history th,
+#agent-history td {
+  padding: 15px 18px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+#agent-history th:nth-child(2),
+#agent-history td:nth-child(2) {
+  min-width: 165px;
+}
+
+#agent-history th:nth-child(3),
+#agent-history td:nth-child(3) {
+  min-width: 145px;
+}
+
+#agent-history th:nth-child(4),
+#agent-history td:nth-child(4) {
+  min-width: 130px;
+}
+
+#agent-history td:last-child,
+#agent-history th:last-child {
+  text-align: right;
+}
+/* Temporary navigation diagnostic */
+.nav-ind {
+  display: none !important;
+}
+.nav a[aria-current="page"] {
+  background: var(--ink-2) !important;
+  color: var(--paper) !important;
+}
+
+.nav a:not([aria-current="page"]) {
+  background: transparent !important;
+}
+/* Active navigation indicator */
+.nav a {
+  position: relative;
+}
+
+.nav a[aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -5px;
+  height: 2px;
+  background: var(--private);
+  border-radius: 2px;
+}
+
+.nav a:not([aria-current="page"])::after {
+  content: none;
+}
+/* Security Decision Breakdown — brighter numbers */
+.security-breakdown .segment-count,
+.security-breakdown .segment-value,
+.security-breakdown .count {
+  color: #f8fafc;
+  font-weight: 700;
+  opacity: 1;
+}

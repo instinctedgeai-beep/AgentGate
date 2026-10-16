@@ -25,7 +25,6 @@
         <a href="#activity" data-view="activity"><span class="nl">Activity</span></a>
         <a href="#gateway" data-view="gateway"><span class="nl">Gateway</span><span class="count" id="nav-pending" hidden>0</span></a>
         <a href="#evidence" data-view="evidence"><span class="nl">Evidence</span></a>
-        <a href="#agent" data-view="agent"><span class="nl">Agent</span></a>
       </nav>
       <div class="env">
         <div class="mode" role="radiogroup" aria-label="Execution mode">
@@ -92,54 +91,291 @@
       </div>
     </section>
 
-    <!-- ACTIVITY: a short report on this session -->
+
+    <!-- ACTIVITY: Protected governance center -->
     <section class="view" id="view-activity" data-title="Activity" hidden>
       <header class="head">
         <div class="head-text">
           <h1>Activity</h1>
-          <p class="summary"><span class="board-stats"><b id="st-total">0</b> requests inspected this session, <b id="st-private">0%</b> kept private. Median inspection took <b id="st-median">—</b> and <b id="st-signals">0</b> sensitive patterns matched.</span></p>
+          <p class="summary">
+            <span class="board-stats">
+              <b id="st-total">0</b> requests inspected this session,
+              <b id="st-private">0%</b> kept private.
+              Median inspection took <b id="st-median">—</b>
+              and <b id="st-signals">0</b> sensitive patterns matched.
+            </span>
+          </p>
         </div>
-        <div class="head-actions"><button class="btn ghost" id="btn-clear">Clear session</button></div>
+        <div class="head-actions">
+          <button class="btn ghost" id="btn-clear">Clear session</button>
+        </div>
       </header>
-      <div class="mixbar" aria-hidden="true"><i class="c" id="mix-c"></i><i class="p" id="mix-p"></i><i class="h" id="mix-h"></i></div>
 
-      <section class="panel activity" id="activity-panel">
-        <div class="p-row">
-          <div><h2 class="p-title">Routing over time</h2><p class="p-sub2">Running total per lane, in the order requests arrived.</p></div>
-          <ul class="legend" aria-label="Legend"><li><i class="c"></i>Cloud</li><li><i class="p"></i>Private</li><li><i class="h"></i>Held</li></ul>
-        </div>
-        <div class="act-wrap" id="activity"></div>
-        <p class="empty" id="activity-empty">Route a prompt or replay demo traffic to draw the timeline.</p>
+      <!-- Reviewer authentication -->
+      <section class="panel" id="activity-auth">
+        <form id="reviewer-form" autocomplete="off">
+          <label for="reviewer-secret">Reviewer authentication</label>
+
+          <div class="reviewer-controls">
+            <input
+              id="reviewer-secret"
+              type="password"
+              placeholder="Reviewer Secret"
+              autocomplete="off"
+              required
+            />
+            <button class="btn primary sm" type="submit" id="reviewer-login">
+              Unlock Activity
+            </button>
+            <button class="btn sm" type="button" id="reviewer-logout" hidden>
+              Lock session
+            </button>
+          </div>
+
+          <p class="p-meta" id="reviewer-status" role="status">
+            Locked — authentication required
+          </p>
+        </form>
       </section>
 
-      <div class="split split-r">
-        <article class="receipt" id="receipt" aria-live="polite">
-          <div class="receipt-empty">
-            <h2 class="p-title">Latest decision</h2>
-            <p class="p-sub">Route a prompt to see which patterns matched, which policy applied and where the request went.</p>
-            <ol class="how"><li><b>Inspect</b> 16 sensitive-data patterns</li><li><b>Route</b> cloud, private or held</li><li><b>Record</b> metadata only</li></ol>
+      <!-- Protected Activity content -->
+      <div id="activity-protected" hidden>
+
+        <!-- Reviewer approval queue -->
+        <section class="panel" id="activity-approvals">
+          <div class="p-row">
+            <div>
+              <h2 class="p-title">Approvals and history</h2>
+              <p class="p-sub2">
+                Review restricted tool requests before execution.
+              </p>
+            </div>
+            <p class="p-meta" id="q-meta"></p>
           </div>
-        </article>
-        <section class="panel">
-          <div class="p-row"><h2 class="p-title">Patterns matched</h2><p class="p-meta" id="sig-meta"></p></div>
-          <div class="sigs" id="sigs"><p class="empty">No sensitive patterns have matched yet.</p></div>
+
+          <div class="queue" id="queue">
+            <p class="empty">No approval requests waiting.</p>
+          </div>
         </section>
-      </div>
+        <div class="mixbar" aria-hidden="true">
+          <i class="c" id="mix-c"></i>
+          <i class="p" id="mix-p"></i>
+          <i class="h" id="mix-h"></i>
+        </div>
+
+        <section class="panel activity" id="activity-panel">
+          <div class="p-row">
+            <div>
+              <h2 class="p-title">Routing over time</h2>
+              <p class="p-sub2">Running total per lane, in the order requests arrived.</p>
+            </div>
+            <ul class="legend" aria-label="Legend">
+              <li><i class="c"></i>Cloud</li>
+              <li><i class="p"></i>Private</li>
+              <li><i class="h"></i>Held</li>
+            </ul>
+          </div>
+          <div class="act-wrap" id="activity"></div>
+          <p class="empty" id="activity-empty">
+            Route a prompt or replay demo traffic to draw the timeline.
+          </p>
+        </section>
+
+        <div class="split split-r">
+          <article class="receipt" id="receipt" aria-live="polite">
+            <div class="receipt-empty">
+              <h2 class="p-title">Latest decision</h2>
+              <p class="p-sub">
+                Route a prompt to see which patterns matched,
+                which policy applied and where the request went.
+              </p>
+              <ol class="how">
+                <li><b>Inspect</b> 16 sensitive-data patterns</li>
+                <li><b>Route</b> cloud, private or held</li>
+                <li><b>Record</b> metadata only</li>
+              </ol>
+            </div>
+          </article>
+
+          <section class="panel">
+            <div class="p-row">
+              <h2 class="p-title">Patterns matched</h2>
+              <p class="p-meta" id="sig-meta"></p>
+            </div>
+            <div class="sigs" id="sigs">
+              <p class="empty">No sensitive patterns have matched yet.</p>
+            </div>
+          </section>
+        </div>
 
       <section class="panel">
         <div class="p-row"><h2 class="p-title">Decisions</h2><p class="p-meta">Metadata only</p></div>
         <div class="tscroll"><table class="tbl" id="stream"><thead><tr><th>Time</th><th>Request</th><th>Route</th><th>Policy</th><th>Patterns</th><th>Outcome</th></tr></thead><tbody></tbody></table></div>
         <p class="empty" id="stream-empty">Waiting for the first request.</p>
-      </section>
+      </section></div><!-- End activity-protected -->
     </section>
 
-    <!-- GATEWAY: a real three-step sequence -->
+    <!-- GATEWAY: authenticated AI tool governance -->
     <section class="view" id="view-gateway" data-title="Gateway" hidden>
-      <header class="head">
-        <div class="head-text"><h1>Tool gateway</h1>
-          <p class="summary">An agent proposes a tool call, the gateway checks it, and a local demo reviewer can approve restricted actions. Each approval works once, for those exact arguments.</p></div>
+        <header class="head gateway-header">
+        <div class="head-text">
+          <h1>Gateway</h1>
+          <p class="summary">
+            Govern AI agent access to company tools through policy enforcement,
+            scoped permissions, and human approval.
+          </p>
+        </div>
+        <div class="gateway-header-auth">
+          <form class="gateway-auth-form" id="requester-form" autocomplete="off">
+            <div class="gateway-auth-heading">
+              <label for="requester-secret">Agent authentication</label>
+              <span class="gateway-auth-lock" aria-hidden="true">Restricted</span>
+            </div>
+
+            <div class="reviewer-controls">
+              <input
+                id="requester-secret"
+                type="password"
+                placeholder="Enter requester API key"
+                autocomplete="off"
+                required
+                aria-describedby="requester-status"
+              />
+              <button class="btn primary sm" type="submit" id="requester-login">
+                Authenticate
+              </button>
+              <button class="btn sm" type="button" id="requester-logout" hidden>
+                Sign out
+              </button>
+            </div>
+
+            <p class="p-meta" id="requester-status" role="status">
+              Authentication required to run AI agents
+            </p>
+          </form>
+        </div>
       </header>
-      <div class="steps">
+
+      <!-- Primary AI agent workflow -->
+      <section class="panel" id="gateway-agent">
+        <div class="p-row">
+          <div>
+            <h2 class="p-title">Try a request</h2>
+            <p class="p-sub2">
+              Test how an AI agent interacts with company tools.
+              AgentGate automatically checks each action against security policies.
+            </p>
+          </div>
+        </div>
+
+      <div class="split gw">
+        <form class="step" id="agentform" autocomplete="off">
+          <label class="step-h" for="agent-prompt">
+            What would you like the agent to do?
+          </label>
+
+          <div class="field">
+            <textarea
+              id="agent-prompt"
+              rows="2"
+              placeholder="Find the public product overview and summarize it"
+            ></textarea>
+
+            <div class="fields" id="agent-trusted-fields" hidden>
+              <label for="agent-customer-id">
+                Customer ID — trusted local input
+                <input
+                  type="text"
+                  id="agent-customer-id"
+                  value="CUST-1001"
+                  autocomplete="off"
+                  spellcheck="false"
+                >
+              </label>
+
+              <p class="p-sub2">
+                This identifier is handled by AgentGate's backend
+                and must not be included in the hosted model prompt.
+              </p>
+            </div>
+
+            <div class="field-foot">
+              <div class="chips" id="agent-samples"></div>
+
+              <div class="field-act">
+                <button
+                  class="btn primary"
+                  type="submit"
+                  id="btn-agent"
+                >
+                  Run agent
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <section
+          class="step"
+          id="agent-out"
+          aria-live="polite"
+        >
+          <h2 class="step-h">Run</h2>
+          <p class="empty">No run yet.</p>
+        </section>
+      </div>
+
+      <details
+        class="panel"
+        id="agent-observability"
+      >
+        <summary>Agent diagnostics</summary>
+
+        <div class="gateway-trend">
+          <div class="p-row">
+            <div>
+              <h3 class="p-title">Security decision breakdown</h3>
+              <p class="p-sub2">
+                Recent policy events, grouped by decision.
+              </p>
+            </div>
+          </div>
+
+          <div id="agent-decision-chart"></div>
+
+          <p class="empty" id="agent-decision-chart-empty">
+            No security decisions recorded yet.
+          </p>
+        </div>
+        <div class="figures" id="agent-metrics"></div>
+
+        <div class="tscroll">
+          <table class="tbl" id="agent-history">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Request ID</th>
+                <th>Status</th>
+                <th>Reviewed by</th>
+                <th class="r">Latency ms</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+
+        <p class="empty" id="agent-history-empty">
+          No agent requests in this session.
+        </p>
+      </details>
+
+      </section>
+      <details class="gateway-manual">
+        <summary>Advanced testing</summary>
+        <p class="p-sub2">
+          Test individual tool permissions and approval decisions.
+        </p>
+        <div class="steps">
         <form class="step" id="toolform" autocomplete="off">
           <h2 class="step-h"><span class="step-n">1</span>Propose a call</h2>
           <div class="tools" id="tools" role="radiogroup" aria-label="Tool"></div>
@@ -147,22 +383,75 @@
           <div class="presets" id="presets"><span>Try</span></div>
           <button class="btn primary" type="submit">Send to gateway</button>
         </form>
+
         <section class="step">
-          <h2 class="step-h"><span class="step-n">2</span>Gateway checks</h2>
+          <h2 class="step-h">
+            <span class="step-n">2</span>Gateway checks
+          </h2>
           <ol class="checks" id="checks" aria-live="polite"></ol>
-          <p class="empty" id="checks-empty">Send a call to watch each check run in order.</p>
+          <p class="empty" id="checks-empty">
+            Send a call to watch each check run in order.
+          </p>
         </section>
+
         <section class="step">
-          <div class="p-row"><h2 class="step-h"><span class="step-n">3</span>Local approval demo</h2><p class="p-meta" id="q-meta"></p></div>
-          <div class="queue" id="queue"><p class="empty">Nothing waiting. Try <b>Customer record</b> or <b>Finance forecast</b>.</p></div>
+          <div class="p-row">
+            <h2 class="step-h">
+              <span class="step-n">3</span>Human approval
+            </h2>
+          </div>
+
+          <div class="queue" id="gateway-status">
+            <p class="empty">
+              Restricted tool requests are sent to the protected
+              Activity page for authorized reviewer approval.
+            </p>
+          </div>
         </section>
       </div>
+      </details>
       <div class="split lower gw">
-        <section class="panel"><h2 class="p-title">Rules</h2>
-          <div class="tscroll"><table class="tbl" id="policy"><thead><tr><th>Tool</th><th>Condition</th><th>Outcome</th></tr></thead><tbody></tbody></table></div></section>
-        <section class="panel"><h2 class="p-title">Recent calls</h2>
-          <div class="tscroll"><table class="tbl" id="toollog"><thead><tr><th>Time</th><th>Tool</th><th>Outcome</th><th>Reason</th></tr></thead><tbody></tbody></table></div>
-          <p class="empty" id="toollog-empty">No calls yet.</p></section>
+        <details class="panel gateway-rules">
+          <summary>Security policies</summary>
+          <p class="p-sub2">
+            Rules that determine which AI actions are allowed,
+            blocked, or require human approval.
+          </p>
+          <div class="tscroll">
+            <table class="tbl" id="policy">
+              <thead>
+                <tr>
+                  <th>Tool</th>
+                  <th>Condition</th>
+                  <th>Outcome</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </details>
+
+        <section class="panel">
+          <h2 class="p-title">Recent security decisions</h2>
+          <p class="p-sub2">
+            See how AgentGate handled recent AI tool requests.
+          </p>
+          <div class="tscroll">
+            <table class="tbl" id="toollog">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Security decision</th>
+                  <th>Explanation</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <p class="empty" id="toollog-empty">
+            No AI tool activity recorded yet.
+          </p>
+        </section>
       </div>
     </section>
 
@@ -184,33 +473,55 @@
         <p class="empty" id="audit-empty">No audit events in this session.</p>
       </section>
     </section>
-
-    <!-- AGENT -->
-    <section class="view" id="view-agent" data-title="Agent" hidden>
-      <header class="head">
-        <div class="head-text"><h1>Agent run</h1>
-          <p class="summary">Nemotron with the gateway in the loop. Private prompts are refused before any model call, and tool results only go back to the model when they are public.</p></div>
-      </header>
-      <div class="split gw">
-        <form class="step" id="agentform" autocomplete="off">
-          <label class="step-h" for="agent-prompt">Ask the agent</label>
-          <div class="field">
-            <textarea id="agent-prompt" rows="4" placeholder="Find the public product overview and summarize it"></textarea>
-            <div class="field-foot"><div class="chips" id="agent-samples"></div><div class="field-act"><button class="btn primary" type="submit" id="btn-agent">Run agent</button></div></div>
-          </div>
-        </form>
-        <section class="step" id="agent-out" aria-live="polite"><h2 class="step-h">Run</h2><p class="empty">No run yet.</p></section>
-      </div>
-      <section class="panel" id="agent-observability" style="margin-top:24px">
-        <div class="p-row"><div><h2 class="p-title">Agent observability</h2><p class="p-sub2">Session-local metadata, not organization-wide telemetry.</p></div></div>
-        <div class="figures" id="agent-metrics"></div>
-        <div class="tscroll"><table class="tbl" id="agent-history"><thead><tr><th>Time</th><th>Request ID</th><th>Status</th><th>Events</th><th class="r">Latency ms</th></tr></thead><tbody></tbody></table></div>
-        <p class="empty" id="agent-history-empty">No agent requests in this session.</p>
-      </section>
-    </section>
   </main>
 </div>
+
 <div class="toasts" id="toasts" aria-live="assertive"></div>
 <script src="console.js"></script>
+</body>
+</html>
+
+  <!-- Reviewer removal confirmation -->
+  <dialog id="removal-dialog" class="removal-dialog">
+    <form id="removal-form">
+      <h3>Remove request</h3>
+      <p>
+        This request will disappear from operational dashboards.
+        Its original security audit will be preserved.
+      </p>
+
+      <label for="removal-secret">6-digit deletion code</label>
+      <input
+        id="removal-secret"
+        name="deletion_code"
+        type="password"
+        inputmode="numeric"
+        pattern="[0-9]{6}"
+        minlength="6"
+        maxlength="6"
+        autocomplete="off"
+        required
+      >
+      <label for="removal-reason">Reason for removal</label>
+      <textarea
+        id="removal-reason"
+        minlength="3"
+        maxlength="100"
+        rows="3"
+        required
+      ></textarea>
+
+      <div class="removal-actions">
+        <button type="button" id="removal-cancel" class="btn">
+          Cancel
+        </button>
+        <button type="submit" class="btn primary">
+          Confirm removal
+        </button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
 </body>
 </html>

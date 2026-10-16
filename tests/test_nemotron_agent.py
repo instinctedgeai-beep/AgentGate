@@ -119,13 +119,14 @@ class NemotronAgentTests(unittest.TestCase):
         client = fake_client([
             fake_tool(
                 "lookup_customer",
-                {"customer_id": "CUST-1001"},
+                {"customer_id": "TRUSTED_CUSTOMER"},
             )
         ])
 
         result = run_agent(
             "Look up a fictional customer.",
             client=client,
+            trusted_customer_id="CUST-1001",
         )
 
         self.assertEqual(
@@ -346,6 +347,192 @@ class NemotronAgentTests(unittest.TestCase):
         self.assertEqual(events[-1]["status"], "COMPLETED")
         self.assertEqual(audit["event_count"], len(events))
 
+    def test_agent_restricted_tool_uses_shared_approval_queue(self):
+        from console_server import Console
+
+        console = Console()
+
+        client = fake_client([
+            fake_tool(
+                "lookup_customer",
+                {"customer_id": "TRUSTED_CUSTOMER"},
+            )
+        ])
+
+        result = run_agent(
+            "Look up a fictional customer record.",
+            client=client,
+            tool_runner=console.call_tool,
+            trusted_customer_id="CUST-1001",
+        )
+
+        # The agent must pause instead of executing the tool.
+        self.assertEqual(result["status"], "ACTION_REQUIRED")
+        self.assertEqual(
+            result["tools"][0]["status"],
+            "APPROVAL_REQUIRED",
+        )
+
+        # The request must appear in Activity's approval queue.
+        approvals = console.snapshot()["approvals"]
+
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(approvals[0]["status"], "PENDING")
+        self.assertEqual(approvals[0]["tool"], "lookup_customer")
+
+        self.assertIn("status_token", result["tools"][0])
+        self.assertIn("approval_id", result["tools"][0])
+
+        status_token = result["tools"][0]["status_token"]
+
+        self.assertEqual(
+            console.request_status(status_token),
+            {
+                "status": "PENDING",
+                "execution_status": None,
+            },
+        )
+        # Restricted customer data must not reach NVIDIA.
+        client.chat.completions.create.assert_called_once()
+
+        serialized = json.dumps(result)
+        self.assertNotIn("Alex Morgan", serialized)
+
+    def test_agent_request_follows_reviewer_decision(self):
+        from console_server import Console
+
+        console = Console()
+
+        client = fake_client([
+            fake_tool(
+                "lookup_customer",
+                {"customer_id": "TRUSTED_CUSTOMER"},
+            )
+        ])
+
+        result = run_agent(
+            "Look up a fictional customer record.",
+            client=client,
+            tool_runner=console.call_tool,
+            trusted_customer_id="CUST-1001",
+        )
+
+        self.assertEqual(result["status"], "ACTION_REQUIRED")
+        self.assertEqual(
+            result["tools"][0]["status"],
+            "APPROVAL_REQUIRED",
+        )
+
+        tool = result["tools"][0]
+        approval_id = tool["approval_id"]
+        status_token = tool["status_token"]
+
+        console.decide(
+            approval_id,
+            "approve",
+            reviewer_id="test-reviewer",
+        )
+
+        approved = console.request_status(status_token)
+
+        self.assertEqual(approved["status"], "APPROVED")
+        self.assertIsNone(approved["execution_status"])
+
+        console.decide(
+            approval_id,
+            "execute",
+            reviewer_id="test-reviewer",
+        )
+
+        completed = console.request_status(status_token)
+
+        self.assertEqual(completed["status"], "CONSUMED")
+        self.assertEqual(
+            completed["execution_status"],
+            "COMPLETED",
+        )
+
+        # Approval must not trigger another hosted model call.
+        client.chat.completions.create.assert_called_once()
+
+        # Neither status response contains customer records.
+        self.assertNotIn(
+            "Alex Morgan",
+            json.dumps({"approved": approved, "completed": completed}),
+        )
+
+    def test_trusted_customer_placeholder_reaches_approval_queue(self):
+        from console_server import Console
+
+        console = Console()
+        client = fake_client([
+            fake_tool(
+                "lookup_customer",
+                {"customer_id": "TRUSTED_CUSTOMER"},
+            )
+        ])
+
+        result = run_agent(
+            "Request a customer record lookup using the trusted identifier.",
+            client=client,
+            tool_runner=console.call_tool,
+            trusted_customer_id="CUST-1001",
+        )
+
+        self.assertEqual(result["status"], "ACTION_REQUIRED")
+
+        approvals = console.snapshot()["approvals"]
+        self.assertEqual(len(approvals), 1)
+        self.assertEqual(
+            approvals[0]["arguments"],
+            {"customer_id": "CUST-1001"},
+        )
+
+        hosted_messages = client.chat.completions.create.call_args.kwargs[
+            "messages"
+        ]
+        self.assertNotIn("CUST-1001", json.dumps(hosted_messages))
+
+    def test_model_cannot_override_trusted_customer(self):
+        from console_server import Console
+
+        console = Console()
+        client = fake_client([
+            fake_tool(
+                "lookup_customer",
+                {"customer_id": "CUST-9999"},
+            )
+        ])
+
+        result = run_agent(
+            "Request a customer record lookup.",
+            client=client,
+            tool_runner=console.call_tool,
+            trusted_customer_id="CUST-1001",
+        )
+
+        self.assertEqual(result["tools"][0]["status"], "BLOCKED")
+        self.assertEqual(console.snapshot()["approvals"], [])
+
+    def test_trusted_placeholder_without_context_is_blocked(self):
+        from console_server import Console
+
+        console = Console()
+        client = fake_client([
+            fake_tool(
+                "lookup_customer",
+                {"customer_id": "TRUSTED_CUSTOMER"},
+            )
+        ])
+
+        result = run_agent(
+            "Request a customer record lookup.",
+            client=client,
+            tool_runner=console.call_tool,
+        )
+
+        self.assertEqual(result["tools"][0]["status"], "BLOCKED")
+        self.assertEqual(console.snapshot()["approvals"], [])
 
         
 if __name__ == "__main__":

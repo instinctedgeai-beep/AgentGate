@@ -16,9 +16,7 @@
     draft_email: "Prepare an email draft. Never sends.",
   };
   const AGENT_SAMPLES = {
-    "Public document": "Find the public product overview and summarize what AgentGate does in one sentence.",
-    "Customer lookup": "Use the lookup_customer tool to retrieve the fictional customer record for CUST-1001. Do not search documents.",
-    "Private request": "My email is alex@example.com. Can you summarize my information?",
+    "Customer lookup": "Look up this customer's record.",
   };
 
   const S = {
@@ -34,20 +32,397 @@
     seenTool: new Set(),
     renderKeys: {},
     animating: 0,
+    reviewerToken: null,
+    requesterToken: null,
+    gatewayRequest: null,
+    gatewayPolling: null,
+    agentRequests: [],
+    agentPolling: null,
   };
 
   // ── API ──────────────────────────────────────────────────────────────
-  async function api(path, body) {
-    const opts = body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
+  async function api(path, body, token = null) {
+    const opts = body === undefined
+      ? {}
+      : {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        };
+
+    if (token) {
+      opts.headers ||= {};
+      opts.headers["Authorization"] = `Bearer ${token}`;
+    }
+
     const res = await fetch(path, opts);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+
+    if (!res.ok) {
+      const isDeletionCodeFailure =
+        res.status === 401 &&
+        /^\/api\/approvals\/[0-9a-f]{16}\/hide$/.test(path) &&
+        data.error === "Invalid deletion code or verification temporarily locked";
+
+      if (res.status === 401 && token && !isDeletionCodeFailure) {
+        S.reviewerToken = null;
+        renderReviewer();
+        S.snap = {
+          history: [],
+          approvals: [],
+          tool_log: [],
+          agent_history: [],
+        };
+        S.renderKeys = {};
+        renderAll();
+      }
+      if (isDeletionCodeFailure) {
+        throw new Error("Incorrect deletion code. Request was not removed.");
+      }
+
+      throw new Error(data.error || `Request failed (${res.status})`);
+    }
+
     return data;
   }
-  async function refresh() {
-    S.snap = await api("/api/state");
-    renderAll();
+
+  function renderRequester() {
+    const authenticated = Boolean(S.requesterToken);
+
+    $("#requester-secret").hidden = authenticated;
+    $("#requester-login").hidden = authenticated;
+    $("#requester-logout").hidden = !authenticated;
+
+    $("#requester-status").textContent = authenticated
+      ? "Requester authenticated — Gateway unlocked"
+      : "Locked — requester authentication required";
   }
+  function renderReviewer() {
+    const authenticated = Boolean(S.reviewerToken);
+
+    $("#reviewer-secret").hidden = authenticated;
+    $("#reviewer-login").hidden = authenticated;
+    $("#reviewer-logout").hidden = !authenticated;
+
+    $("#reviewer-status").textContent = authenticated
+      ? "Reviewer authenticated — Governance Center unlocked"
+      : "Locked — reviewer authentication required";
+
+    const protectedArea = $("#activity-protected");
+    if (protectedArea) {
+      protectedArea.hidden = !authenticated;
+    }
+  }
+
+  function syncGatewayExecution(request) {
+    if (!request) return;
+
+    const items = $$("#checks li");
+    if (items.length < 5) return;
+
+    const execution = items[4];
+    const dot = execution.querySelector(".dot");
+    if (!dot) return;
+
+    const completed =
+      request.status === "CONSUMED" &&
+      request.execution_status === "COMPLETED";
+
+    const rejected = request.status === "REJECTED";
+    const failed =
+      request.status === "CONSUMED" &&
+      request.execution_status !== "COMPLETED";
+
+    execution.classList.remove("skip", "done", "pass", "fail", "wait");
+
+    if (completed) {
+      execution.classList.add("done", "pass");
+      dot.textContent = "✓";
+      execution.lastElementChild.innerHTML = pill("COMPLETED");
+    } else if (rejected) {
+      execution.classList.add("skip");
+      dot.textContent = "";
+      execution.lastElementChild.innerHTML = pill("REJECTED");
+    } else if (failed) {
+      execution.classList.add("done", "fail");
+      dot.textContent = "✕";
+      execution.lastElementChild.innerHTML = pill("FAILED");
+    } else {
+      execution.classList.add("done", "wait");
+      dot.textContent = "…";
+      execution.lastElementChild.innerHTML = pill("PENDING");
+    }
+  }
+
+  function renderGatewayStatus() {
+    const box = $("#gateway-status");
+    if (!box) return;
+
+    const request = S.gatewayRequest;
+    const displayKey = request
+      ? `${request.token}:${request.status}:${request.execution_status}`
+      : "empty";
+
+    if (box.dataset.displayKey === displayKey) return;
+    box.dataset.displayKey = displayKey;
+
+    if (!request) {
+      box.innerHTML = `
+        <p class="empty">
+          Submit a restricted tool request to see its approval status.
+        </p>`;
+      return;
+    }
+
+    const status = request.execution_status === "COMPLETED"
+      ? "COMPLETED"
+      : request.status;
+
+    const messages = {
+      PENDING: "Awaiting authorized reviewer approval.",
+      APPROVED: "Approved by reviewer. Execution is pending.",
+      REJECTED: "Request rejected. The tool will not execute.",
+      CONSUMED: "Approval consumed.",
+      COMPLETED: "Approved and executed successfully.",
+      FAILED: "Execution failed.",
+    };
+
+    box.innerHTML = `
+      <div class="req">
+        <div class="req-top">
+          <strong>${esc(request.tool)}</strong>
+          ${pill(status)}
+        </div>
+        <p class="req-meta">
+          ${esc(messages[status] || "Status unavailable.")}
+        </p>
+      </div>`;
+  }
+
+  async function checkGatewayStatus() {
+    const request = S.gatewayRequest;
+    if (!request?.token) return;
+
+    try {
+      const state = await api("/api/request-status", {
+        status_token: request.token,
+      });
+
+      // Ignore responses for a request that has since been replaced.
+      if (S.gatewayRequest !== request) return;
+
+      request.status = state.status;
+      request.execution_status = state.execution_status;
+
+      renderGatewayStatus();
+      syncGatewayExecution(request);
+
+      if (["REJECTED", "CONSUMED"].includes(state.status)) {
+        clearInterval(S.gatewayPolling);
+        S.gatewayPolling = null;
+      }
+    } catch (error) {
+      // Do not silently turn a failed status check into an approval.
+      console.warn("Could not update Gateway approval status:", error);
+    }
+  }
+
+  function watchGatewayRequest(entry) {
+    if (S.gatewayPolling !== null) {
+      clearInterval(S.gatewayPolling);
+      S.gatewayPolling = null;
+    }
+
+    S.gatewayRequest = null;
+
+    if (entry.status !== "APPROVAL_REQUIRED" || !entry.status_token) {
+      renderGatewayStatus();
+      return;
+    }
+
+    S.gatewayRequest = {
+      token: entry.status_token,
+      tool: entry.tool,
+      status: "PENDING",
+      execution_status: null,
+    };
+
+    renderGatewayStatus();
+
+    S.gatewayPolling = setInterval(checkGatewayStatus, 3000);
+  }
+
+  function stopAgentPolling() {
+    if (S.agentPolling !== null) {
+      clearInterval(S.agentPolling);
+      S.agentPolling = null;
+    }
+  }
+
+  function updateAgentStatusDisplay() {
+    const box = $("#agent-out");
+    if (!box || !S.agentRequests.length) return;
+
+    const statuses = S.agentRequests.map((request) => {
+      if (request.execution_status === "COMPLETED") return "COMPLETED";
+      if (request.status === "REJECTED") return "REJECTED";
+      if (request.status === "CONSUMED") return "FAILED";
+      return request.status;
+    });
+
+    let overall = "ACTION_REQUIRED";
+
+    if (statuses.includes("REJECTED")) {
+      overall = "REJECTED";
+    } else if (statuses.includes("FAILED")) {
+      overall = "FAILED";
+    } else if (statuses.every((status) => status === "COMPLETED")) {
+      overall = "COMPLETED";
+    }
+
+    const statusBadge = box.querySelector(".agent-live-status");
+
+    if (statusBadge) {
+      statusBadge.innerHTML = pill(overall);
+    }
+
+    const list = box.querySelector(".agent-live-approvals");
+
+    if (list) {
+      list.innerHTML = S.agentRequests.map((request) => {
+        const status = request.execution_status === "COMPLETED"
+          ? "COMPLETED"
+          : request.status;
+
+        return `<div class="req">
+          <div class="req-h">
+            <b>${esc(request.tool)}</b>
+            ${pill(status)}
+          </div>
+          <p class="req-meta">
+            ${esc(status === "PENDING"
+              ? "Awaiting reviewer approval."
+              : status === "APPROVED"
+                ? "Approved. Awaiting execution."
+                : status === "REJECTED"
+                  ? "Reviewer denied this action."
+                  : status === "COMPLETED"
+                    ? "Authorized execution completed."
+                    : "Execution did not complete successfully.")}
+          </p>
+        </div>`;
+      }).join("");
+    }
+
+        const message = box.querySelector(".agent-live-message");
+
+        if (message) {
+          message.textContent = overall === "COMPLETED"
+            ? "The authorized action was executed successfully."
+            : overall === "REJECTED"
+              ? "The reviewer rejected this action. It will not execute."
+              : overall === "FAILED"
+                ? "The action could not be completed."
+                : "Waiting for an authorized reviewer to approve and execute this action.";
+        }
+  }
+
+  async function checkAgentRequests() {
+    if (!S.agentRequests.length) return;
+
+    const requests = S.agentRequests;
+
+    for (const request of requests) {
+      if (["REJECTED", "CONSUMED"].includes(request.status)) continue;
+
+      try {
+        const state = await api("/api/request-status", {
+          status_token: request.token,
+        });
+
+        if (S.agentRequests !== requests) return;
+
+        request.status = state.status;
+        request.execution_status = state.execution_status;
+      } catch (error) {
+        console.warn("Agent approval status unavailable:", error);
+      }
+    }
+
+    updateAgentStatusDisplay();
+
+    if (requests.every((request) =>
+      ["REJECTED", "CONSUMED"].includes(request.status)
+    )) {
+      stopAgentPolling();
+    }
+  }
+
+  function watchAgentRequests(result) {
+    stopAgentPolling();
+
+    S.agentRequests = (result.tools || [])
+      .filter((tool) =>
+        tool.status === "APPROVAL_REQUIRED" &&
+        typeof tool.status_token === "string"
+      )
+      .map((tool) => ({
+        tool: tool.tool,
+        token: tool.status_token,
+        status: "PENDING",
+        execution_status: null,
+      }));
+
+    if (!S.agentRequests.length) return;
+
+    S.agentPolling = setInterval(checkAgentRequests, 3000);
+  }
+
+async function refresh() {
+  const publicState = await api("/api/public-state");
+
+  if (S.reviewerToken) {
+    try {
+      S.snap = await api("/api/state", undefined, S.reviewerToken);
+    } catch (error) {
+      S.reviewerToken = null;
+      S.snap = {
+        history: [],
+        approvals: [],
+        tool_log: [],
+        agent_history: [],
+      };
+      renderReviewer();
+    }
+  } else {
+    S.snap = {
+      history: [],
+      approvals: [],
+      tool_log: [],
+      agent_history: [],
+    };
+  }
+
+  S.publicState = publicState;
+  renderAll();
+}
+
+  async function refreshProtectedActivity() {
+    if (!S.reviewerToken) return;
+
+    try {
+      await refresh();
+    } catch (error) {
+      console.warn("Activity refresh failed:", error);
+    }
+  }
+
+  setInterval(() => {
+    if (S.reviewerToken && location.hash === "#activity") {
+      refreshProtectedActivity();
+    }
+  }, 4000);
+
   function toast(msg, err = false) {
     const t = document.createElement("div");
     t.className = "toast" + (err ? " err" : "");
@@ -400,13 +775,24 @@
       const act = a.status === "PENDING"
         ? `<div class="req-act"><button class="btn primary sm" data-act="approve" data-id="${a.approval_id}">Approve</button><button class="btn sm" data-act="reject" data-id="${a.approval_id}">Reject</button></div>`
         : a.status === "APPROVED" ? `<div class="req-act"><button class="btn primary sm" data-act="execute" data-id="${a.approval_id}">Execute once</button></div>` : "";
-      // only the most recent used approval shows its result; older ones stay compact
-      const out = a.outcome?.result && a === list.find((x) => x.outcome?.result) ? `<pre>${esc(JSON.stringify(a.outcome.result, null, 2))}</pre>` : "";
-      const stamp = a.status === "CONSUMED" ? `<span class="stampmark">USED</span>` : a.status === "REJECTED" ? `<span class="stampmark" style="color:var(--held)">DENIED</span>` : "";
       return `<div class="req" data-status="${a.status}">
         <div class="req-h"><b>${esc(a.tool)}</b>${pill(a.status)}</div>
         <div class="req-args">${esc(args)}</div>
-        <div class="req-meta">Requested at ${esc(clock(a.created_at))}, approval <span class="m">${esc(a.approval_id)}</span></div>${act}${out}${stamp}</div>`;
+        <div class="req-meta">
+          Requested at ${esc(clock(a.created_at))} ·
+          Request <span class="m">${esc(a.approval_id.slice(0, 8))}</span>
+        </div>
+        ${act}
+        ${["REJECTED", "CONSUMED"].includes(a.status)
+          ? `<div class="req-act">
+               <button class="btn sm"
+                 data-act="hide"
+                 data-id="${esc(a.approval_id)}">
+                 Remove from dashboard
+               </button>
+             </div>`
+          : ""}
+        </div>`;
     }).join("");
   }
 
@@ -415,14 +801,226 @@
     $("#policy tbody").innerHTML = p.map((r) => `<tr><td class="m">${esc(r.tool)}</td><td>${esc(r.condition)}</td><td>${pill(r.outcome)}</td></tr>`).join("");
   }
   function renderToolLog() {
-    const rows = S.snap.tool_log.slice(0, 8);
+    const rows = (S.publicState?.recent_tool_statuses || []).slice(0, 8);
+
     if (!changed("toollog", rows)) return;
+
     $("#toollog-empty").hidden = rows.length > 0;
-    $("#toollog tbody").innerHTML = rows.map((e) => {
-      const key = e.time + e.tool + e.status;
-      const fresh = !S.seenTool.has(key); S.seenTool.add(key);
-      return `<tr class="${fresh ? "new" : ""}"><td class="m">${esc(clock(e.time))}</td><td class="m">${esc(e.tool)}</td><td>${pill(e.status)}</td><td>${esc(e.reason)}</td></tr>`;
+
+    const descriptions = {
+      APPROVAL_REQUIRED: [
+        "Approval required",
+        "The action was held for human authorization."
+      ],
+      PENDING: [
+        "Awaiting approval",
+        "The action is waiting for an authorized reviewer."
+      ],
+      APPROVED: [
+        "Approved",
+        "A reviewer authorized the action. Execution is tracked separately."
+      ],
+      REJECTED: [
+        "Rejected",
+        "A reviewer rejected the requested action."
+      ],
+      BLOCKED: [
+        "Blocked",
+        "AgentGate prevented the action under its security policy."
+      ],
+      COMPLETED: [
+        "Completed",
+        "A tool operation completed."
+      ],
+      ERROR: [
+        "Error",
+        "The action could not be completed."
+      ]
+    };
+
+    $("#toollog tbody").innerHTML = rows.map((event) => {
+      const [label, explanation] =
+        descriptions[event.status] || [
+          "Policy event",
+          "AgentGate recorded a security decision."
+        ];
+
+      return `<tr>
+        <td class="m">${esc(clock(event.time))}</td>
+        <td>${esc(label)}</td>
+        <td>${esc(explanation)}</td>
+      </tr>`;
     }).join("");
+  }
+  function renderGatewayActivity() {
+    const host = $("#agent-decision-chart");
+    const empty = $("#agent-decision-chart-empty");
+    if (!host || !empty) return;
+
+    const approvals = S.snap?.approvals || [];
+    const deletedRecords = S.snap?.deleted_records || [];
+
+    const events = approvals.map((approval) => {
+      let status = approval.status;
+
+      if (status === "CONSUMED") {
+        status = approval.execution_status || "UNKNOWN";
+      }
+
+      return { status };
+    });
+
+    const counts = {
+      completed: 0,
+      review: 0,
+      blocked: 0,
+      other: 0
+    };
+
+    events.forEach((event) => {
+      const status = String(event.status || "").toUpperCase();
+
+      if (["COMPLETED", "ALLOW", "ALLOWED", "PASSED"].includes(status)) {
+        counts.completed++;
+      } else if (
+        ["APPROVAL_REQUIRED", "PENDING", "APPROVED"].includes(status)
+      ) {
+        counts.review++;
+      } else if (
+        ["BLOCKED", "DENIED", "REJECTED", "ERROR"].includes(status)
+      ) {
+        counts.blocked++;
+      } else {
+        counts.other++;
+      }
+    });
+
+    const total = events.length;
+    const hasDeleted = deletedRecords.length > 0;
+
+    empty.hidden = total > 0 || hasDeleted;
+    host.innerHTML = "";
+
+    if (!total && !hasDeleted) return;
+
+    const segments = [
+      {
+        label: "Completed",
+        count: counts.completed,
+        cls: "completed"
+      },
+      {
+        label: "Needs review",
+        count: counts.review,
+        cls: "review"
+      },
+      {
+        label: "Rejected / blocked",
+        count: counts.blocked,
+        cls: "blocked"
+      },
+      {
+        label: "Deleted",
+        count: deletedRecords.length,
+        cls: "deleted"
+      }
+    ];
+
+    const cards = segments.map((segment) => `
+      <${segment.cls === "deleted" ? "button" : "div"}
+        ${segment.cls === "deleted"
+          ? 'type="button" id="view-deleted-records"'
+          : ""}
+        class="security-breakdown-card ${segment.cls}"
+      >
+        <span>${esc(segment.label)}</span>
+        <strong>${segment.count}</strong>
+        <i class="${segment.cls}"></i>
+      </${segment.cls === "deleted" ? "button" : "div"}>
+    `).join("");
+
+    const bars = segments
+      .filter((segment) =>
+        segment.cls !== "deleted" && segment.count > 0
+      )
+      .map((segment) => `
+        <div
+          class="security-breakdown-segment ${segment.cls}"
+          style="width:${(segment.count / total) * 100}%"
+          title="${esc(segment.label)}: ${segment.count}"
+        ></div>
+      `).join("");
+
+        host.innerHTML = `
+      <div class="security-breakdown">
+        <div class="security-breakdown-cards">${cards}</div>
+
+        <div
+          class="security-breakdown-bar"
+          role="img"
+          aria-label="Security outcomes: ${counts.completed} completed,
+          ${counts.review} needing review,
+          ${counts.blocked} rejected or blocked"
+        >
+          ${bars}
+        </div>
+
+        <div class="security-breakdown-summary">
+          <span>${total} active recorded outcomes</span>
+          <span>${total
+            ? Math.round((counts.completed / total) * 100)
+            : 0}% completed</span>
+        </div>
+
+        <div id="deleted-records-panel"
+             class="deleted-records-panel"
+             hidden>
+          <div class="deleted-records-heading">
+            <h4>Deleted requests</h4>
+            <span>Preserved security audit</span>
+          </div>
+
+          <div class="deleted-records-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Deleted at</th>
+                  <th>Request ID</th>
+                  <th>Status</th>
+                  <th>Deleted by</th>
+                  <th>Employee ID</th>
+                  <th>Reason</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                ${deletedRecords.map((r) => `
+                  <tr>
+                    <td>${esc(clock(r.deleted_at))}</td>
+                    <td class="m">${esc(r.request_id)}</td>
+                    <td>${pill(r.status)}</td>
+                    <td>${esc(r.deleted_by || "—")}</td>
+                    <td>${esc(r.employee_id || "—")}</td>
+                    <td>${esc(r.reason || "—")}</td>
+                  </tr>
+                `).join("") ||
+                  '<tr><td colspan="6">No deleted requests.</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+
+    $("#view-deleted-records")?.addEventListener("click", () => {
+      if (!S.reviewerToken) {
+        toast("Unlock Activity with reviewer credentials first.", true);
+        return;
+      }
+
+      const panel = $("#deleted-records-panel");
+      panel.hidden = !panel.hidden;
+    });
   }
 
   // evidence
@@ -519,13 +1117,44 @@
       if (typeof r.duration_ms === "number") times.push(r.duration_ms);
     });
     const latency = times.length ? (times.reduce((a,b) => a+b, 0)/times.length).toFixed(0) + " ms" : "—";
-    const data = [["Agent runs", h.length], ["Blocked / pending", `${totals.blocked} / ${totals.pending}`],
-      ["Completed tools", totals.tools], ["Avg. latency", latency]];
+        const data = [
+      ["Agent runs", h.length],
+      [
+        "Pending",
+        (S.snap?.approvals || []).filter(
+          (a) => a.status === "PENDING" || a.status === "APPROVED"
+        ).length
+      ],
+      [
+        "Approved executions completed",
+        (S.snap?.approvals || []).filter(
+          (a) =>
+            a.status === "CONSUMED" &&
+            a.execution_status === "COMPLETED"
+        ).length
+      ],
+      ["Avg. latency", latency]
+    ];
     const box = $("#agent-metrics");
-    if (box) box.innerHTML = data.map(([name,value]) => `<div class="fig"><span>${esc(name)}</span><b>${esc(value)}</b><small>Current session</small></div>`).join("");
+    if (box) box.innerHTML = data.map(([name,value]) => `<div class="fig"><span>${esc(name)}</span><b>${esc(value)}</b><small>Recorded history</small></div>`).join("");
     const table = $("#agent-history tbody");
-    if (table) table.innerHTML = h.slice(0, 20).map((r) => `<tr><td class="m">${esc(clock(r.timestamp))}</td><td class="m">${esc(r.request_id || "—")}</td><td>${pill(r.status)}</td><td class="m">${r.events.length}</td><td class="m r">${r.duration_ms == null ? "—" : Number(r.duration_ms).toFixed(1)}</td></tr>`).join("");
-    const empty = $("#agent-history-empty"); if (empty) empty.hidden = !!h.length;
+    if (table) table.innerHTML = h.slice(0, 20).map((r) => `
+      <tr>
+        <td class="m">${esc(clock(r.timestamp))}</td>
+        <td class="m">${esc(r.request_id || "—")}</td>
+        <td>${pill(r.display_status || r.status)}</td>
+        <td class="m">
+          ${r.reviewer
+            ? esc(r.reviewer.reviewer_id)
+            : "—"}
+        </td>
+      <td class="m r">
+        ${r.duration_ms == null
+          ? "—"
+          : Number(r.duration_ms).toFixed(1)}
+      </td>
+    </tr>
+  `).join("");
   }
 
   function renderAll() {
@@ -539,6 +1168,7 @@
     renderToolLog();
     renderAudit();
     renderAgentMetrics();
+    renderGatewayActivity();
   }
 
   // ── Views ────────────────────────────────────────────────────────────
@@ -553,23 +1183,104 @@
   function showView() {
     const name = (location.hash || "#switchboard").slice(1);
     const view = $("#view-" + name) ? name : "switchboard";
+
     const current = $(".view:not([hidden])");
     const same = current && current.id === "view-" + view;
+
     const swap = () => {
-      $$(".view").forEach((v) => { v.hidden = v.id !== "view-" + view; v.classList.remove("swap"); });
+      $$(".view").forEach((element) => {
+        element.hidden = element.id !== "view-" + view;
+        element.classList.remove("swap");
+      });
+
       window.scrollTo(0, 0);
     };
-    $$(".nav a").forEach((a) => { if (a.dataset.view === view) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+
+    $$(".nav a").forEach((link) => {
+      if (link.dataset.view === view) {
+        link.setAttribute("aria-current", "page");
+      } else {
+        link.removeAttribute("aria-current");
+      }
+    });
+
+    if (!same) {
+      swap();
+    }
+
     placeIndicator();
-    if (same) { /* nothing to swap */ }
-    else if (!S.booted || !current || reduced) swap();
-    else if (document.startViewTransition) document.startViewTransition(swap);
-    else { swap(); const v = $("#view-" + view); void v.offsetWidth; v.classList.add("swap"); }
+
     document.title = `${$("#view-" + view).dataset.title} · AgentGate`;
-    if (view === "evidence" && !S.cases.length) loadCases();
+
+    if (view === "evidence" && !S.cases.length) {
+      loadCases();
+    }
   }
   const loadCases = guard(async () => { S.cases = (await api("/api/evaluation")).cases; S.casesLoaded = true; renderCases(); });
+function confirmRemoval() {
+  return new Promise((resolve) => {
+    const dialog = $("#removal-dialog");
+    const form = $("#removal-form");
+    const secretInput = $("#removal-secret");
+    const reasonInput = $("#removal-reason");
+    const cancelButton = $("#removal-cancel");
 
+    form.reset();
+
+    let finished = false;
+
+    function finish(result) {
+      if (finished) return;
+      finished = true;
+
+      form.removeEventListener("submit", submit);
+      cancelButton.removeEventListener("click", cancel);
+      dialog.removeEventListener("cancel", cancel);
+      dialog.removeEventListener("close", closed);
+
+      if (dialog.open) dialog.close();
+
+      secretInput.value = "";
+      reasonInput.value = "";
+
+      resolve(result);
+    }
+
+    function submit(event) {
+      event.preventDefault();
+
+      const secret = secretInput.value;
+      const reason = reasonInput.value.trim();
+
+      if (!/^[0-9]{6}$/.test(secret) || reason.length < 3 || reason.length > 100) {
+        form.reportValidity();
+        return;
+      }
+
+      finish({
+        deletion_code: secret,
+        reason
+      });
+    }
+
+    function cancel(event) {
+      event.preventDefault();
+      finish(null);
+    }
+
+    function closed() {
+      finish(null);
+    }
+
+    form.addEventListener("submit", submit);
+    cancelButton.addEventListener("click", cancel);
+    dialog.addEventListener("cancel", cancel);
+    dialog.addEventListener("close", closed);
+
+    dialog.showModal();
+    secretInput.focus();
+  });
+}
   // ── Wiring ───────────────────────────────────────────────────────────
   function wire() {
     window.addEventListener("hashchange", showView);
@@ -632,32 +1343,142 @@
       }
     }));
     $("#btn-clear").addEventListener("click", guard(async () => {
-      await api("/api/clear", {});
+      if (!S.reviewerToken) {
+        throw new Error("Unlock Activity as a reviewer before clearing the session.");
+      }
+
+      await api("/api/clear", {}, S.reviewerToken);
       $("#receipt").innerHTML = S.emptyReceipt;
       S.actN = 0;
       S.seen.clear();
       await refresh();
     }));
 
-    // gateway
+    // Requester authentication
+    renderRequester();
+
+    $("#requester-form").addEventListener("submit", guard(async (ev) => {
+      ev.preventDefault();
+
+      const input = $("#requester-secret");
+      const api_key = input.value;
+      input.value = "";
+
+      const result = await api("/api/requester/login", { api_key });
+
+      S.requesterToken = result.token;
+      renderRequester();
+      toast("Gateway unlocked");
+    }));
+
+    $("#requester-logout").addEventListener("click", guard(async () => {
+      const token = S.requesterToken;
+      if (!token) return;
+
+      S.requesterToken = null;
+      renderRequester();
+
+      await api("/api/requester/logout", {}, token);
+      toast("Gateway locked");
+    }));
+
+    // Reviewer authentication
+    renderReviewer();
+
+    $("#reviewer-form").addEventListener("submit", guard(async (ev) => {
+      ev.preventDefault();
+
+      const input = $("#reviewer-secret");
+      const button = $("#reviewer-login");
+      const secret = input.value;
+
+      input.value = "";
+      button.disabled = true;
+
+      try {
+        const result = await api("/api/reviewer/login", { secret });
+
+        S.reviewerToken = result.token;
+        await refresh();
+        renderReviewer();
+
+        toast("Governance Center unlocked");
+      } finally {
+        button.disabled = false;
+      }
+    }));
+
+    $("#reviewer-logout").addEventListener("click", guard(async () => {
+      const token = S.reviewerToken;
+
+      if (!token) return;
+
+      // Remove local authorization immediately.
+      S.reviewerToken = null;
+      renderReviewer();
+
+      await api("/api/reviewer/logout", {}, token);
+      toast("Reviewer session locked");
+    }));
     $("#tools").addEventListener("click", (ev) => { const b = ev.target.closest("[data-tool]"); if (b) { S.tool = b.dataset.tool; renderTools(); $("#checks").innerHTML = ""; $("#checks-empty").hidden = false; } });
     $("#fields").addEventListener("input", (ev) => { const f = ev.target.dataset.f; if (f) (S.args[S.tool] ||= {})[f] = ev.target.value; });
     $("#presets").insertAdjacentHTML("beforeend", Object.keys(S.status.presets).map((n) => `<button type="button" data-p="${esc(n)}">${esc(n)}</button>`).join(""));
     $("#presets").addEventListener("click", (ev) => { const b = ev.target.closest("[data-p]"); if (b) setPreset(b.dataset.p); });
     $("#toolform").addEventListener("submit", guard(async (ev) => {
       ev.preventDefault();
+
       const args = {};
-      S.status.tools[S.tool].forEach((f) => { args[f] = S.args[S.tool]?.[f] ?? ""; });
-      const entry = await api("/api/tools/call", { tool: S.tool, arguments: args });
+      S.status.tools[S.tool].forEach((f) => {
+        args[f] = S.args[S.tool]?.[f] ?? "";
+      });
+
+      if (!S.requesterToken) {
+        throw new Error("Unlock Gateway with requester credentials first.");
+      }
+
+      const entry = await api("/api/tools/call", {
+        tool: S.tool,
+        arguments: args,
+      }, S.requesterToken);
+
+      watchGatewayRequest(entry);
+
       await playChecks(entry);
       await refresh();
     }));
-    $("#queue").addEventListener("click", guard(async (ev) => {
+        $("#queue").addEventListener("click", guard(async (ev) => {
       const b = ev.target.closest("[data-act]");
       if (!b) return;
+
+      if (!S.reviewerToken) {
+        throw new Error("Unlock reviewer approvals before continuing.");
+      }
+
       b.disabled = true;
-      await api(`/api/approvals/${b.dataset.id}/${b.dataset.act}`, {});
-      await refresh();
+
+      try {
+        let removalDetails = {};
+
+        if (b.dataset.act === "hide") {
+          removalDetails = await confirmRemoval();
+
+          if (!removalDetails) {
+            return;
+          }
+        }
+
+        await api(
+          `/api/approvals/${b.dataset.id}/${b.dataset.act}`,
+          removalDetails,
+          S.reviewerToken
+        );
+
+        await refresh();
+      } finally {
+        if (b.isConnected) {
+          b.disabled = false;
+        }
+      }
     }));
 
     // evidence
@@ -668,17 +1489,51 @@
       renderCases();
     });
     $("#btn-export").addEventListener("click", guard(async () => {
-      const data = await api("/api/audit.json");
-      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
-      const a = Object.assign(document.createElement("a"), { href: url, download: "agentgate-audit.json" });
-      document.body.append(a); a.click(); a.remove();
+      if (!S.reviewerToken) {
+        toast("Unlock Activity with reviewer credentials to export the audit.", true);
+        return;
+      }
+
+      const data = await api(
+        "/api/audit.json",
+        undefined,
+        S.reviewerToken
+      );
+
+      const url = URL.createObjectURL(
+        new Blob(
+          [JSON.stringify(data, null, 2)],
+          { type: "application/json" }
+        )
+      );
+
+      const a = Object.assign(document.createElement("a"), {
+        href: url,
+        download: "agentgate-audit.json",
+      });
+
+      document.body.append(a);
+      a.click();
+      a.remove();
+
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      toast(`Exported ${data.length} audit event${data.length === 1 ? "" : "s"}.`);
+      toast(
+        `Exported ${data.length} audit event${data.length === 1 ? "" : "s"}.`
+      );
     }));
 
     // agent
     $("#agent-samples").innerHTML = Object.keys(AGENT_SAMPLES).map((k) => `<button type="button" class="chip" data-a="${esc(k)}"><i style="background:var(--muted)"></i>${esc(k)}</button>`).join("");
-    $("#agent-samples").addEventListener("click", (ev) => { const b = ev.target.closest("[data-a]"); if (b) $("#agent-prompt").value = AGENT_SAMPLES[b.dataset.a]; });
+    $("#agent-samples").addEventListener("click", (ev) => {
+      const button = ev.target.closest("[data-a]");
+      if (!button) return;
+
+      $("#agent-prompt").value = AGENT_SAMPLES[button.dataset.a];
+
+      $("#agent-trusted-fields").hidden =
+        button.dataset.a !== "Customer lookup";
+    });
+
     $("#agentform").addEventListener("submit", guard(async (ev) => {
       ev.preventDefault();
       const prompt = $("#agent-prompt").value;
@@ -687,18 +1542,101 @@
       btn.disabled = true;
       out.innerHTML = `<p class="p-title">Run</p><p class="empty">Checking policy and calling Nemotron…</p>`;
       try {
-        const r = await api("/api/agent", { prompt });
-        const tools = (r.tools || []).map((t, i) => `<div class="req" data-status="${t.status === "COMPLETED" ? "APPROVED" : t.status === "BLOCKED" ? "REJECTED" : "PENDING"}" style="animation-delay:${i * .08}s"><div class="req-h"><b>${i + 1}. ${esc(t.tool)}</b>${pill(t.status)}</div><div class="req-args"><span class="k">Policy explanation:</span> ${esc(t.reason || "Not available")}</div>${t.status === "COMPLETED" && t.result ? `<pre>${esc(JSON.stringify(t.result, null, 2))}</pre>` : ""}</div>`).join("");
-        const summary = { COMPLETED: "Agent completed the request.", ACTION_REQUIRED: "An action was blocked or needs review. Nothing from those tools was sent back to the model." }[r.status]
-          || `${r.status === "BLOCKED" ? "Blocked" : "Error"}: ${r.reason || "No reason provided"}`;
-        out.innerHTML = `<div class="p-row"><p class="p-title">Execution status</p>${pill(r.status)}</div>
-          <p class="rc-why" style="margin:0">${esc(summary)}${r.policy_id ? ` <span class="m">Policy ${esc(r.policy_id)}</span>` : ""}</p>
-          ${r.status === "ACTION_REQUIRED" ? `<p class="note">The Gateway offers a separate local approval demonstration. It does not resume this agent run.</p>` : ""}
-          ${r.answer ? `<p class="p-title">Nemotron response</p><div class="agent-answer">${esc(r.answer)}</div>` : ""}
-          ${tools ? `<p class="p-title">Tool execution</p><div class="agent-tools">${tools}</div>` : ""}
-          ${r.audit ? `<p class="p-title">Execution audit · ${esc(r.audit.request_id || "local")}</p>
-          <p class="p-sub2">${esc(String(r.audit.duration_ms ?? "—"))} ms elapsed · timestamps in UTC · metadata only</p>
-          <div class="agent-tools">${(r.audit.events || []).map((e, i) => `<div class="req"><div class="req-h"><b>${i + 1}. ${esc(e.event_type)}</b>${pill(e.status)}</div><div class="req-meta">${esc(e.timestamp || "")} ${e.detail ? " · " + esc(e.detail) : ""}</div></div>`).join("")}</div>` : ""}`;
+        const trustedFields = $("#agent-trusted-fields");
+
+        const body = { prompt };
+
+        if (!trustedFields.hidden) {
+          body.trusted_customer_id =
+            $("#agent-customer-id").value.trim();
+        }
+
+        if (!S.requesterToken) {
+          throw new Error("Unlock Gateway with requester credentials first.");
+        }
+
+        const r = await api("/api/agent", body, S.requesterToken);
+
+        watchAgentRequests(r);
+        const awaitingReview = S.agentRequests.length > 0;
+
+        const messages = {
+          COMPLETED: "The agent completed the request.",
+          ACTION_REQUIRED: awaitingReview
+            ? "This action requires an authorized reviewer before it can continue."
+            : "The requested action could not proceed.",
+          BLOCKED: "AgentGate blocked this request under its security policy.",
+          ERROR: "The request could not be completed."
+        };
+
+        const initialStatus = awaitingReview
+          ? "ACTION_REQUIRED"
+          : r.status;
+
+        const explanation =
+          messages[r.status] || r.reason || "Status unavailable.";
+
+        out.innerHTML = `
+          <div class="p-row">
+            <p class="p-title">Request status</p>
+            <span class="agent-live-status">${pill(initialStatus)}</span>
+          </div>
+
+          <p class="note agent-live-message">
+            ${esc(explanation)}
+          </p>
+
+          ${awaitingReview ? `
+            <div class="agent-tools agent-live-approvals"></div>
+          ` : ""}
+
+          ${r.answer && !awaitingReview ? `
+            <div class="agent-answer">${esc(r.answer)}</div>
+          ` : ""}
+
+          <details class="agent-technical-details">
+            <summary>Technical details</summary>
+
+            ${(r.tools || []).length ? `
+              <h3 class="p-title">Tool decisions</h3>
+              <div class="agent-tools">
+                ${(r.tools || []).map((tool) => `
+                  <div class="req">
+                    <div class="req-h">
+                      <b>${esc(tool.tool)}</b>
+                      ${pill(tool.status)}
+                    </div>
+                    <p class="req-meta">
+                      ${esc(tool.reason || "No additional details.")}
+                    </p>
+                  </div>
+                `).join("")}
+              </div>
+            ` : ""}
+
+            ${r.audit ? `
+              <h3 class="p-title">Execution audit</h3>
+              <p class="p-sub2">
+                ${esc(String(r.audit.duration_ms ?? "—"))}
+                ms elapsed · Metadata only
+              </p>
+              <div class="agent-tools">
+                ${(r.audit.events || []).map((event) => `
+                  <div class="req">
+                    <div class="req-h">
+                      <b>${esc(event.event_type)}</b>
+                      ${pill(event.status)}
+                    </div>
+                    <p class="req-meta">
+                      ${esc(event.detail || "")}
+                    </p>
+                  </div>
+                `).join("")}
+              </div>
+            ` : ""}
+          </details>
+        `;
+          updateAgentStatusDisplay();
         await refresh();
       } finally { btn.disabled = false; }
     }));
